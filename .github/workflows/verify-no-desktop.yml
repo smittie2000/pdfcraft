@@ -1,0 +1,53 @@
+name: "Verify: no-desktop launch (fork only)"
+
+# Fork-only: builds the x64 MSI the way the release workflow does (unsigned: no secrets here)
+# and starts it without a desktop, as winget-pkgs validation does. Not for upstream.
+on:
+  push:
+    branches: [verify/no-desktop-start]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out craft-i18n
+        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@main
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: verify-windows-x64
+          cache-on-failure: true
+      - name: Install WiX
+        uses: storytold/craft-common-actions/actions/install-wix@main
+      - name: Build and package (unsigned)
+        shell: pwsh
+        run: ./packaging/windows/package.ps1 -Arch x64
+      - name: Find the MSI
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem dist/release/*x64*.msi | Select-Object -First 1
+          if (-not $msi) { Get-ChildItem dist -Recurse; throw 'no x64 MSI in dist/release' }
+          "MSI=$($msi.FullName)" >> $env:GITHUB_ENV
+      - name: Launch check
+        uses: smittie2000/craft-common-actions/actions/windows-launch-check@windows-launch-check
+        with:
+          msi: ${{ env.MSI }}
+          main-exe: pdfcraft.exe
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: msi-x64
+          path: dist/release/*x64*.msi
+          if-no-files-found: ignore
