@@ -261,6 +261,8 @@ mod xmp_value_tests {
         assert_eq!(xmp_value(&item, "pdf:Trapped"), None);
         let version = description("", "<pdfxid:GTS_PDFXVersion><rdf:Alt><rdf:li note=\"a > b\">PDF/X-4</rdf:li></rdf:Alt></pdfxid:GTS_PDFXVersion>");
         assert_eq!(xmp_value(&version, KEY), None);
+        let cdata = description("", "<pdfxid:GTS_PDFXVersion><![CDATA[PDF/X-4]]></pdfxid:GTS_PDFXVersion>");
+        assert_eq!(xmp_value(&cdata, KEY).as_deref(), Some("PDF/X-4"), "a CDATA section is text");
         let spaced = description("pdfxid:GTS_PDFXVersion=\"&#x20;PDF/X-4&#x20;\"", "");
         assert_eq!(xmp_value(&spaced, KEY).as_deref(), Some("PDF/X-4"));
     }

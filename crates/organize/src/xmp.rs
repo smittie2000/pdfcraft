@@ -149,11 +149,32 @@ fn read_property(xmp: &str, name: &str, shape: Shape, lists: bool) -> Option<Str
     Some(value).filter(|v| !v.trim().is_empty())
 }
 
-/// Character data `text` as a value, unescaped; `None` when it still holds markup (a `<`, which
-/// a value escapes as `&lt;`), so a structure the reader doesn't take apart never shows as text.
+/// Character data `text` as a value: unescaped, with a CDATA section's text taken as written;
+/// `None` when it still holds other markup (a `<`, which a value escapes as `&lt;`), so a structure
+/// the reader doesn't take apart never shows as text.
 fn text_value(text: &str) -> Option<String> {
-    let text = text.trim();
-    (!text.contains('<')).then(|| unescape(text))
+    const OPEN: &str = "<![CDATA[";
+    let mut rest = text.trim();
+    let mut out = String::with_capacity(rest.len());
+    loop {
+        let Some(at) = rest.find(OPEN) else {
+            if rest.contains('<') {
+                return None;
+            }
+            out.push_str(&unescape(rest));
+            return Some(out);
+        };
+        let plain = rest.get(..at)?;
+        if plain.contains('<') {
+            return None;
+        }
+        out.push_str(&unescape(plain));
+        // An unterminated section is markup that didn't end: no value.
+        let section = rest.get(at + OPEN.len()..)?;
+        let end = section.find("]]>")?;
+        out.push_str(section.get(..end)?);
+        rest = section.get(end + 3..)?;
+    }
 }
 
 /// The `rdf:li` items of a property's content: each one's `xml:lang` (if any) and its text. Only
@@ -497,6 +518,16 @@ mod tests {
         assert_eq!(get_property(packet, "pdf:Producer", Shape::Text).as_deref(), Some("Shown"));
         let packet = "<?><pdf:Producer>Hidden</pdf:Producer>?><pdf:Producer>Shown</pdf:Producer>";
         assert_eq!(get_property(packet, "pdf:Producer", Shape::Text).as_deref(), Some("Shown"));
+    }
+
+    /// A CDATA section is character data: its text is the value, taken as written.
+    #[test]
+    fn cdata_text_is_a_value() {
+        let get = |inner: &str| get_property(&format!("<pdf:Producer>{inner}</pdf:Producer>"), "pdf:Producer", Shape::Text);
+        assert_eq!(get("<![CDATA[A <b> & c]]>").as_deref(), Some("A <b> & c"));
+        assert_eq!(get("x &amp; <![CDATA[&amp;]]> y").as_deref(), Some("x & &amp; y"));
+        assert_eq!(get("<![CDATA[open"), None, "an unterminated section");
+        assert_eq!(get("<![CDATA[a]]><b/>"), None, "other markup after it");
     }
 
     /// An end tag or `</rdf:RDF>` inside a comment is not the real one: replacing a property
