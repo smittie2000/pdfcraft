@@ -21,10 +21,11 @@ concurrency:
 jobs:
   release:
     # Intentionally tracked at @main (not SHA-pinned) so org-wide CI improvements, security fixes, and build optimizations propagate without PR churn across all craftapp repos.
-    uses: storytold/craft-common-actions/.github/workflows/release.yml@main
+    uses: smittie2000/craft-common-actions/.github/workflows/release.yml@e2e-launch-check
     with:
       app-name: pdfcraft
       app-title: PdfCraft
+      windows-launch-check: true
       craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
       version: ${{ inputs.version }}
     secrets:
