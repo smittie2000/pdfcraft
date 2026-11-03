@@ -135,11 +135,12 @@ pub(crate) fn touched(doc: &Document, resources: &Dict, before: &[u8], after: &[
 
 fn mcid_of(doc: &Document, o: &Object, page: Option<ObjRef>, target: ObjRef, stream: Option<(ObjRef, ObjRef)>) -> Option<i64> {
     match &*doc.resolve(o) {
-        Object::Int(n) if page == Some(target) && stream.is_none() => Some(*n),
+        // By number: a `/Pg` may name the page with another generation than `/Kids` does.
+        Object::Int(n) if page.map(|p| p.num) == Some(target.num) && stream.is_none() => Some(*n),
         Object::Dict(m) if m.name(b"Type") == Some(b"MCR") => {
             let pg = m.get(b"Pg").and_then(Object::as_ref).or(page);
             let stm = m.get(b"Stm").and_then(Object::as_ref);
-            (pg == Some(target) && stm == stream.map(|s| s.0)).then(|| m.int(b"MCID")).flatten()
+            (pg.map(|p| p.num) == Some(target.num) && stm == stream.map(|s| s.0)).then(|| m.int(b"MCID")).flatten()
         }
         _ => None,
     }

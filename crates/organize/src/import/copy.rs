@@ -153,7 +153,10 @@ impl<'a> Copier<'a> {
             Object::Dict(d) => self.map_dest_depth(d.get(b"D")?, depth + 1),
             Object::Array(a) => {
                 let page = a.first()?.as_ref()?;
-                let new_page = *self.pages.get(&page)?;
+                // The page map holds pages at their current generation; a destination may name one
+                // with a stale generation.
+                let current = ObjRef { num: page.num, generation: self.src.generation(page.num) };
+                let new_page = *self.pages.get(&page).or_else(|| self.pages.get(&current))?;
                 let mut a = a.clone();
                 a[0] = Object::Ref(new_page);
                 Some(Object::Array(a))

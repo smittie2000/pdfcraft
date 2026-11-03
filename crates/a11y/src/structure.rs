@@ -219,7 +219,8 @@ pub(crate) fn has_struct_tree(doc: &Document) -> bool {
 fn walk<V: Visitor>(doc: &Document, pages: &[Page], v: &mut V) {
     let Some(root) = struct_root(doc) else { return };
     let role_map = root.as_dict().and_then(|d| d.get(b"RoleMap")).map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
-    let page_index: HashMap<ObjRef, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj, i)).collect();
+    // By number: a `/Pg` may name the page with another generation than `/Kids` does.
+    let page_index: HashMap<u32, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj.num, i)).collect();
     let mut w = Walker { doc, role_map, page_index, seen: HashSet::new(), frames: Vec::new(), tasks: Vec::new(), opened: 0 };
     if root.as_dict().is_some_and(|d| d.contains(b"K")) {
         w.tasks.push(Task::Node { loc: Loc { owner: root, path: vec![Step::K] }, depth: 0, page: None });
@@ -277,7 +278,8 @@ enum Task {
 struct Walker<'a> {
     doc: &'a Document,
     role_map: Dict,
-    page_index: HashMap<ObjRef, usize>,
+    /// Page index by object number.
+    page_index: HashMap<u32, usize>,
     /// Indirect kids already read. A kid reached again (a shared kid, or a cycle) is skipped, so a
     /// kid counts once, where it first appears.
     seen: HashSet<ObjRef>,
@@ -402,7 +404,7 @@ impl Walker<'_> {
     }
 
     fn page_of(&self, d: &Dict) -> Option<usize> {
-        d.get(b"Pg").and_then(Object::as_ref).and_then(|r| self.page_index.get(&r).copied())
+        d.get(b"Pg").and_then(Object::as_ref).and_then(|r| self.page_index.get(&r.num).copied())
     }
 
     /// Whether `key` holds a string with some text in it.

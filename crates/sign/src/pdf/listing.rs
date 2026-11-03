@@ -360,7 +360,8 @@ pub fn list_cached(doc: &Document, bytes: &[u8], trust: &TrustStore, cache: &Dig
 }
 
 fn page_index(doc: &Document, p: ObjRef) -> Option<usize> {
-    pdfcraft_annot::page_refs(doc).ok()?.iter().position(|r| *r == p)
+    // By number: the widget's `/P` may name the page with another generation than `/Kids` does.
+    pdfcraft_annot::page_refs(doc).ok()?.iter().position(|r| r.num == p.num)
 }
 
 /// A widget's `/MK /R` as a quarter turn (0, 90, 180 or 270); missing, malformed or not a

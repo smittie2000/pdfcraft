@@ -134,7 +134,8 @@ fn exclusions(source: &ExportSource, options: Options) -> Result<(Exclusions, bo
     };
     let roles = root.get(b"RoleMap").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
     let pages = pdfcraft_model::pages(&doc);
-    let page_index: HashMap<_, _> = pages.iter().enumerate().map(|(index, page)| (page.obj, index)).collect();
+    // By number: a `/Pg` may name the page with another generation than `/Kids` does.
+    let page_index: HashMap<u32, usize> = pages.iter().enumerate().map(|(index, page)| (page.obj.num, index)).collect();
     let mut stack = root.get(b"K").map(|k| vec![(k.clone(), None::<ObjRef>, false, 0usize)]).unwrap_or_default();
     let mut seen = HashSet::new();
     let mut out: Exclusions = HashMap::new();
@@ -155,7 +156,7 @@ fn exclusions(source: &ExportSource, options: Options) -> Result<(Exclusions, bo
         let object = doc.resolve(&object);
         let mut keep = |id: i64, page: Option<ObjRef>| {
             if excluded {
-                if let Some((page, id)) = page.and_then(|p| page_index.get(&p).copied()).zip(i32::try_from(id).ok().filter(|id| *id >= 0)) {
+                if let Some((page, id)) = page.and_then(|p| page_index.get(&p.num).copied()).zip(i32::try_from(id).ok().filter(|id| *id >= 0)) {
                     out.entry(page).or_default().insert(id);
                 } else {
                     unclassified = true;

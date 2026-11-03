@@ -329,6 +329,18 @@ fn row_and_column_spans_keep_a_table_regular() {
 }
 
 /// A tagged document whose structure tree is the Document element `document` (object 3).
+/// A `/Pg` finds its page by number: `/Kids` listing the page with another generation (`3 1 R`,
+/// where every `/Pg` says `3 0 R`) still puts the tag on it.
+#[test]
+fn a_tag_s_page_is_found_whatever_generation_kids_names() {
+    let mut objs = good();
+    objs[1] = "<< /Type /Pages /Kids [3 1 R] /Count 1 >>".into();
+    let doc = pdf(&objs, "");
+    let listed = tags(&doc);
+    assert!(!listed.is_empty());
+    assert!(listed.iter().all(|t| t.page == Some(0)), "every tag of the fixture is on page 1");
+}
+
 fn structure_doc(objects: &[String]) -> Document {
     let mut objs = vec!["<< /Type /Catalog /StructTreeRoot 2 0 R >>".to_string(), "<< /Type /StructTreeRoot /K 3 0 R >>".to_string()];
     objs.extend_from_slice(objects);

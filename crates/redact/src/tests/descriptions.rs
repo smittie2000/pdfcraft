@@ -37,6 +37,17 @@ fn an_ancestor_describing_redacted_content_loses_its_descriptions() {
     }
 }
 
+/// The redacted marked content is found on its page by number: with `/Kids` naming the page
+/// `3 1 R` while the structure's `/Pg` says `3 0 R`, the section's descriptions still go.
+#[test]
+fn descriptions_go_when_kids_names_the_page_with_another_generation() {
+    let mut doc = sectioned("11 0 R");
+    doc.update_dict(ObjRef::new(2, 0), |d| d.set(b"Kids".to_vec(), Object::Array(vec![Object::Ref(ObjRef::new(3, 1))]))).unwrap();
+    mark(&mut doc, 0, &[[5.0, 195.0, 60.0, 212.0]], "");
+    apply(&mut doc, None).unwrap();
+    assert!(!full_save_holds(&doc, b"LEAK_"), "a description of the redacted word survived");
+}
+
 #[test]
 fn a_link_element_that_keeps_its_text_loses_the_description_of_its_removed_annotation() {
     use crate::sanitize::{Hidden, remove_hidden};

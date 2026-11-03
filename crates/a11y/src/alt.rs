@@ -311,12 +311,13 @@ pub fn figures(doc: &Document) -> Vec<Figure> {
     let Some(root) = tree_root(doc) else { return Vec::new() };
     let role_map = root.get(b"RoleMap").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
     let pages = pdfcraft_model::pages(doc);
-    let index: HashMap<ObjRef, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj, i)).collect();
+    // By number: a `/Pg` may name the page with another generation than `/Kids` does.
+    let index: HashMap<u32, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj.num, i)).collect();
     let figures: Vec<(Element, Option<usize>)> = elements(doc)
         .into_iter()
         .filter(|e| e.dict.name(b"S").is_some_and(|s| standard(doc, &role_map, s) == b"Figure"))
         .map(|e| {
-            let page = e.page.and_then(|p| index.get(&p).copied());
+            let page = e.page.and_then(|p| index.get(&p.num).copied());
             (e, page)
         })
         .collect();
@@ -466,7 +467,7 @@ pub fn mark_decorative(doc: &mut Document, obj: ObjRef) -> Result<(), AltError> 
     let ids: HashSet<i64> = mcids(doc, &d).into_iter().collect();
     let pages = pdfcraft_model::pages(doc);
     let pg = d.get(b"Pg").and_then(Object::as_ref).or_else(|| elements(doc).into_iter().find(|e| e.object == obj).and_then(|e| e.page));
-    if let Some(page) = pg.and_then(|p| pages.iter().find(|x| x.obj == p)).filter(|_| !ids.is_empty()) {
+    if let Some(page) = pg.and_then(|p| pages.iter().find(|x| x.obj.num == p.num)).filter(|_| !ids.is_empty()) {
         let streams = decode_page_streams(doc, &page.dict).ok_or(AltError::TooLarge)?;
         // The parent tree no longer points those ids at the figure.
         if artifact_marked_content(doc, page, streams, &ids, false)?
@@ -509,7 +510,7 @@ pub fn mark_tag_artifact(doc: &mut Document, obj: ObjRef) -> Result<(), Artifact
     }
     let pages = pdfcraft_model::pages(doc);
     let page_ref = element.page.ok_or(ArtifactError::NoPage)?;
-    let page = pages.iter().find(|page| page.obj == page_ref).ok_or(ArtifactError::NoPage)?;
+    let page = pages.iter().find(|page| page.obj.num == page_ref.num).ok_or(ArtifactError::NoPage)?;
     let parent = element.dict.get(b"P").and_then(Object::as_ref).ok_or(ArtifactError::NoParent)?;
     let replacement = replacement_kids(doc, parent, obj)?;
     let streams = decode_page_streams(doc, &page.dict).ok_or(ArtifactError::TooLarge)?;

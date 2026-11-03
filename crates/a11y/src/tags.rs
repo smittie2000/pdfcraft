@@ -154,7 +154,8 @@ fn text(doc: &Document, d: &pdfcraft_cos::Dict, key: &[u8]) -> Option<String> {
 /// List reachable, indirect tags in structure-tree order.
 pub fn tags(doc: &Document) -> Vec<TagInfo> {
     let pages = pdfcraft_model::pages(doc);
-    let page_index: std::collections::HashMap<ObjRef, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj, i)).collect();
+    // By number: a `/Pg` may name the page with another generation than `/Kids` does.
+    let page_index: std::collections::HashMap<u32, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj.num, i)).collect();
     alt::elements(doc)
         .into_iter()
         .filter_map(|e| {
@@ -169,7 +170,7 @@ pub fn tags(doc: &Document) -> Vec<TagInfo> {
                 language: text(doc, &e.dict, b"Lang"),
                 summary: table_attribute(doc, &e.dict, b"Summary").and_then(|o| o.as_string().map(PdfString::to_text)),
                 scope: table_attribute(doc, &e.dict, b"Scope").and_then(|o| o.as_name().map(|n| String::from_utf8_lossy(n).into_owned())),
-                page: e.page.and_then(|p| page_index.get(&p).copied()),
+                page: e.page.and_then(|p| page_index.get(&p.num).copied()),
             })
         })
         .collect()
@@ -179,7 +180,8 @@ pub fn tags(doc: &Document) -> Vec<TagInfo> {
 pub fn tag_content(doc: &Document, object: ObjRef) -> Result<Vec<TagContentItem>, TagError> {
     let Some(element) = alt::elements(doc).into_iter().find(|e| e.object == object) else { return Err(TagError::NotATag(object)) };
     let pages = pdfcraft_model::pages(doc);
-    let page_index: std::collections::HashMap<ObjRef, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj, i)).collect();
+    // By number: a `/Pg` may name the page with another generation than `/Kids` does.
+    let page_index: std::collections::HashMap<u32, usize> = pages.iter().enumerate().map(|(i, p)| (p.obj.num, i)).collect();
     let mut marks = Vec::new();
     if let Some(kids) = element.dict.get(b"K") {
         direct_marks(doc, kids, element.page, &mut marks);
@@ -189,7 +191,7 @@ pub fn tag_content(doc: &Document, object: ObjRef) -> Result<Vec<TagContentItem>
     Ok(marks
         .into_iter()
         .map(|(page, mcid)| {
-            let page = page.and_then(|p| page_index.get(&p).copied());
+            let page = page.and_then(|p| page_index.get(&p.num).copied());
             let text = page
                 .and_then(|i| {
                     let page_texts = match texts.entry(i) {

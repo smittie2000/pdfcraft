@@ -2382,6 +2382,28 @@ fn space_audit_survives_deeply_nested_forms() {
     assert!(forms.bytes > 20_000 * 40, "every form is counted, however deep: {audit:?}");
 }
 
+/// A link whose destination names its page at the generation the document holds it at is valid,
+/// even when `/Kids` lists that page with a stale generation: pages are matched by number.
+#[test]
+fn a_link_to_a_page_listed_with_a_stale_generation_is_kept() {
+    let mut doc = Document::new_empty();
+    let p = page(&mut doc, &[], "BT ET");
+    let mut d = Dict::new();
+    d.set(b"Type".to_vec(), Object::name("Annot"));
+    d.set(b"Subtype".to_vec(), Object::name("Link"));
+    d.set(b"Rect".to_vec(), Object::Array(vec![0.into(), 0.into(), 10.into(), 10.into()]));
+    d.set(b"Dest".to_vec(), Object::Array(vec![Object::Ref(p), Object::name("Fit")]));
+    let link = doc.add(Object::Dict(d));
+    doc.update_dict(p, |d| d.set(b"Annots".to_vec(), Object::Array(vec![Object::Ref(link)]))).unwrap();
+    let pages = doc.root().and_then(|r| doc.get(r).as_dict().and_then(|d| d.reference(b"Pages"))).unwrap();
+    let stale = ObjRef { num: p.num, generation: p.generation + 1 };
+    doc.update_dict(pages, |d| d.set(b"Kids".to_vec(), Object::Array(vec![Object::Ref(stale)]))).unwrap();
+    let report = optimize(&mut doc, &Settings::default()).unwrap();
+    assert_eq!(report.invalid_links, 0);
+    let annots = doc.get(p).as_dict().and_then(|d| d.get(b"Annots").cloned()).unwrap();
+    assert_eq!(annots.as_array().map(Vec::len), Some(1), "the link stays");
+}
+
 #[test]
 fn invalid_links_and_unreferenced_destinations_go() {
     let mut doc = Document::new_empty();

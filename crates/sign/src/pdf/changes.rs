@@ -30,7 +30,10 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
     // object is judged by the role it held when signed, never by the labels or keys its new,
     // attacker-written version carries (relabelling a signed page /Type /Sig, or dropping its
     // /Type and adding /ModDate, must not reclassify it away from page content).
-    let signed_pages: HashSet<ObjRef> = pdfcraft_annot::page_refs(&old).unwrap_or_default().into_iter().collect();
+    // At the generation the signed revision holds each page at, as the references compared with
+    // them are built: `/Kids` may name a page with a stale one.
+    let signed_pages: HashSet<ObjRef> =
+        pdfcraft_annot::page_refs(&old).unwrap_or_default().into_iter().map(|p| ObjRef { num: p.num, generation: old.generation(p.num) }).collect();
     // The signed pages' /Annots arrays that are objects of their own. Adding an annotation updates
     // such an array in place (the page dictionary does not change), so it is judged like a
     // page's inline /Annots: by the annotations it gained.

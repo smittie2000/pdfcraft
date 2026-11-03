@@ -74,10 +74,10 @@ fn dest_name(o: &Object) -> Option<Vec<u8>> {
     }
 }
 
-fn valid(o: &Object, pages: &HashSet<ObjRef>, count: usize, names: &HashSet<Vec<u8>>) -> bool {
+fn valid(o: &Object, pages: &HashSet<u32>, count: usize, names: &HashSet<Vec<u8>>) -> bool {
     match o {
         Object::Array(a) => match a.first() {
-            Some(Object::Ref(r)) => pages.contains(r),
+            Some(Object::Ref(r)) => pages.contains(&r.num),
             Some(Object::Int(i)) => *i >= 0 && (*i as usize) < count,
             _ => false,
         },
@@ -88,7 +88,9 @@ fn valid(o: &Object, pages: &HashSet<ObjRef>, count: usize, names: &HashSet<Vec<
 /// Remove links whose destination is missing, and clear the destination of such bookmarks
 /// (they stay, so their children do too). Returns (links, bookmarks).
 pub(crate) fn remove_invalid(doc: &mut Document, pages: &[ObjRef]) -> Result<(usize, usize), pdfcraft_cos::CosError> {
-    let set: HashSet<ObjRef> = pages.iter().copied().collect();
+    // By number: a destination may name a page with another generation than `/Kids` does, and
+    // removing its link for that would lose a working link.
+    let set: HashSet<u32> = pages.iter().map(|p| p.num).collect();
     let names = named_dests(doc);
     let mut links = 0;
     for p in pages {

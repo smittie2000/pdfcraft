@@ -32,7 +32,8 @@ struct Walker<'a> {
     doc: &'a Document,
     role_map: Dict,
     pages: &'a [Page],
-    page_index: HashMap<ObjRef, usize>,
+    /// Page index by object number: a `/Pg` may name the page with another generation.
+    page_index: HashMap<u32, usize>,
     seen: HashSet<ObjRef>,
     visits: usize,
     /// Per page: the text each MCID shows (read once per page).
@@ -48,7 +49,7 @@ pub fn headings(doc: &Document) -> Vec<Heading> {
         doc,
         role_map: root.get(b"RoleMap").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default(),
         pages: &pages,
-        page_index: pages.iter().enumerate().map(|(i, p)| (p.obj, i)).collect(),
+        page_index: pages.iter().enumerate().map(|(i, p)| (p.obj.num, i)).collect(),
         seen: HashSet::new(),
         visits: 0,
         texts: HashMap::new(),
@@ -130,7 +131,7 @@ impl Walker<'_> {
         if let Some(kids) = d.get(b"K") {
             self.marks(kids, pg, depth + 1, &mut marks);
         }
-        let Some(page) = pg.or_else(|| marks.iter().find_map(|m| m.0)).and_then(|p| self.page_index.get(&p).copied()) else { return };
+        let Some(page) = pg.or_else(|| marks.iter().find_map(|m| m.0)).and_then(|p| self.page_index.get(&p.num).copied()) else { return };
         let doc = self.doc;
         let attr = |key: &[u8]| d.get(key).map(|o| doc.resolve(o)).and_then(|o| o.as_string().map(|s| s.to_text())).filter(|t| !t.trim().is_empty());
         let title = match attr(b"ActualText") {
@@ -152,7 +153,7 @@ impl Walker<'_> {
             if gathered >= MAX_TITLE * 4 {
                 break;
             }
-            let page = p.and_then(|p| self.page_index.get(&p).copied()).unwrap_or(page);
+            let page = p.and_then(|p| self.page_index.get(&p.num).copied()).unwrap_or(page);
             if let Some(text) = self.texts_of(page).get(id) {
                 gathered = gathered.saturating_add(text.len()).saturating_add(1);
                 parts.push(text.clone());
