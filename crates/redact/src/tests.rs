@@ -2041,6 +2041,27 @@ fn a_mark_with_only_a_usable_rect_still_redacts() {
     assert!(!content(&doc, 0).contains("1234"));
 }
 
+/// A quad with a corner that is not a finite number (the parser reads `-nan`) is unusable whole:
+/// its box from the other corners would be smaller than the mark. The mark redacts through its
+/// /Rect instead.
+#[test]
+fn a_quad_with_a_corner_that_is_not_finite_falls_back_to_the_rect() {
+    let mut doc = one_page(b"BT /F1 10 Tf 10 100 Td (AB1234CD) Tj ET", "", vec![]);
+    mark(&mut doc, 0, &[[20.0, 95.0, 40.0, 110.0]], "");
+    let m = marks(&doc).swap_remove(0);
+    let quads = pdfcraft_cos::Lexer::new(b"[-nan 110 40 110 30 95 40 95]", 0).object().unwrap();
+    assert!(quads.as_array().unwrap()[0].as_f64().unwrap().is_nan(), "{quads:?}");
+    doc.update_dict(m.obj, |d| {
+        d.set(b"QuadPoints".to_vec(), quads);
+        d.set(b"Rect".to_vec(), Object::Array(vec![Object::Int(20), Object::Int(95), Object::Int(40), Object::Int(110)]));
+    })
+    .unwrap();
+    assert_eq!(marks(&doc)[0].rects, [[20.0, 95.0, 40.0, 110.0]]);
+    let r = apply(&mut doc, None).unwrap();
+    assert_eq!((r.marks, r.glyphs), (1, 4));
+    assert!(!content(&doc, 0).contains("1234"));
+}
+
 /// Only the pages being applied decide the refusal: an unreadable mark on another page does not
 /// stop the marks of the selected page from being applied.
 #[test]

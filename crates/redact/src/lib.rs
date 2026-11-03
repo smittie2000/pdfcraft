@@ -214,12 +214,15 @@ pub(crate) fn marks_checked(doc: &Document) -> (Vec<Mark>, Vec<usize>) {
             if d.name(b"Subtype") != Some(b"Redact") {
                 continue;
             }
+            // An entry that is not a number reads as NaN, so the quads after it keep their corners.
             let quads: Vec<f64> = d
                 .get(b"QuadPoints")
-                .and_then(|q| doc.resolve(q).as_array().map(|a| a.iter().filter_map(Object::as_f64).collect()))
+                .and_then(|q| doc.resolve(q).as_array().map(|a| a.iter().map(|x| x.as_f64().unwrap_or(f64::NAN)).collect()))
                 .unwrap_or_default();
+            // A quad with any corner that is not finite is unusable whole: its box from the other
+            // corners would be smaller than the mark, and redact less than it shows.
             let mut rects: Vec<[f64; 4]> =
-                quads.as_chunks::<8>().0.iter().map(pdfcraft_geom::quad_bounds).filter(|r| r.iter().all(|v| v.is_finite())).collect();
+                quads.as_chunks::<8>().0.iter().filter(|q| q.iter().all(|v| v.is_finite())).map(pdfcraft_geom::quad_bounds).collect();
             if rects.is_empty()
                 && let Some(r) = rect_of(doc, d.get(b"Rect"))
             {
