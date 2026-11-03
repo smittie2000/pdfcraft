@@ -66,6 +66,9 @@ fn walk(doc: &Document, top: ObjRef, max_nodes: usize, max_entries: usize) -> (V
             return (holders, entries, false);
         }
         seen.insert(node.num);
+        // At the generation the document holds it at: redaction writes holder nodes, and an edit
+        // through a stale `/Kids` generation would store the node under that one.
+        let node = ObjRef { num: node.num, generation: doc.generation(node.num) };
         let obj = doc.get(node);
         let Some(d) = obj.as_dict() else { continue };
         if d.contains(b"Resources") {
@@ -204,5 +207,17 @@ mod tests {
         assert_eq!(entries, 2);
         assert!(complete, "exactly at the cap");
         assert!(!walk(&doc, r(2), 100, 1).2, "one past the cap");
+    }
+
+    /// A node listed with a stale generation is given at the one the document holds it at.
+    #[test]
+    fn holders_are_named_at_their_current_generation() {
+        let bytes = Pdf::new()
+            .obj("<< /Type /Catalog /Pages 2 0 R >>")
+            .obj("<< /Type /Pages /Kids [3 1 R] /Count 1 >>")
+            .obj("<< /Type /Page /Parent 2 0 R /Resources << >> >>")
+            .build();
+        let doc = Document::open(Arc::new(bytes)).unwrap();
+        assert_eq!(resource_holders(&doc, r(2)).unwrap(), [(r(3), vec![r(3)])]);
     }
 }
