@@ -184,6 +184,20 @@ fn a_walk_cut_off_at_a_cap_is_not_rebuilt_from() {
     assert_eq!(page_count(&doc).unwrap(), 3);
 }
 
+/// Recovery leaves a tree the walk gave up on before its first page alone: it is too large, not
+/// missing.
+#[test]
+fn a_tree_cut_off_before_its_first_page_is_not_recovered() {
+    let doc = open(fixture());
+    let top = pages_root(&doc).unwrap();
+    assert!(lists_a_page(pdfcraft_model::PageLeaves::with_limits(&doc, top, 100, 100)).unwrap());
+    assert!(matches!(lists_a_page(pdfcraft_model::PageLeaves::with_limits(&doc, top, 1, 100)), Err(OrganizeError::Invalid(_))));
+    let mut empty = open(fixture());
+    let root = pages_root(&empty).unwrap();
+    empty.update_dict(root, |d| d.set(b"Kids".to_vec(), Object::Array(Vec::new()))).unwrap();
+    assert!(!lists_a_page(pdfcraft_model::PageLeaves::under(&empty, root)).unwrap(), "an empty tree lists no page");
+}
+
 /// A rebuilt tree names each page at the generation the document holds it at, not a stale one its
 /// old `/Kids` used.
 #[test]

@@ -1,4 +1,4 @@
-use super::read::{fields, page_refs};
+use super::read::{fields, page_refs, whole_page_refs};
 use super::{Document, Field, FormError, ObjRef, Object, invalid};
 
 /// A page's tab order (`/Tabs`).
@@ -111,7 +111,7 @@ fn right_to_left(doc: &Document) -> bool {
 
 /// Set the tab order of pages (0-based).
 pub fn set_tab_order(doc: &mut Document, pages: &[usize], order: TabOrder) -> Result<(), FormError> {
-    let refs = page_refs(doc);
+    let refs = whole_page_refs(doc)?;
     for &p in pages {
         let r = *refs.get(p).ok_or_else(|| FormError::Invalid(format!("page {} does not exist", p + 1)))?;
         doc.update_dict(r, |d| match order {
@@ -156,7 +156,7 @@ pub fn move_in_tab_order(doc: &mut Document, name: &str, earlier: bool) -> Resul
             widgets.extend(g.widgets.iter().filter(|w| w.page == Some(page)).map(|w| w.obj));
         }
     }
-    let pr = *page_refs(doc).get(page).ok_or_else(|| FormError::Invalid("no such page".into()))?;
+    let pr = *whole_page_refs(doc)?.get(page).ok_or_else(|| FormError::Invalid("no such page".into()))?;
     let annots_obj =
         doc.get(pr).as_dict().and_then(|d| d.get(b"Annots").cloned()).ok_or_else(|| FormError::Invalid("the page has no annotations".into()))?;
     let list = doc.resolve(&annots_obj).as_array().cloned().unwrap_or_default();

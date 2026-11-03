@@ -179,12 +179,27 @@ fn rebuild(doc: &mut Document, order: &[(ObjRef, Dict)]) -> Result<(), OrganizeE
     Ok(())
 }
 
+/// Whether `leaves` finds a page. A walk that gave up at a cap before its first page is an error:
+/// that tree is too large, not missing, and rebuilding it from the scanned pages would reorder them
+/// and drop their inherited attributes.
+fn lists_a_page(mut leaves: pdfcraft_model::PageLeaves<'_>) -> Result<bool, OrganizeError> {
+    if leaves.next().is_some() {
+        return Ok(true);
+    }
+    if leaves.truncated() {
+        return Err(OrganizeError::Invalid("the page tree is too large to read".into()));
+    }
+    Ok(false)
+}
+
 /// Gather the document's `/Type /Page` objects into a new page tree when the catalog leads to no
 /// page (its `/Pages` is missing or points at a lost object). Readers then find the pages by
 /// scanning the file, in file order, and edits must address those same pages. Returns how many
 /// pages were gathered; 0 leaves the document unchanged.
 pub fn recover_page_tree(doc: &mut Document) -> Result<usize, OrganizeError> {
-    if pages_root(doc).is_ok_and(|top| pdfcraft_model::PageLeaves::under(doc, top).next().is_some()) {
+    if let Ok(top) = pages_root(doc)
+        && lists_a_page(pdfcraft_model::PageLeaves::under(doc, top))?
+    {
         return Ok(0);
     }
     let catalog = doc.root().ok_or(OrganizeError::NoPageTree)?;

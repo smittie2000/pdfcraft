@@ -206,9 +206,25 @@ fn nums(doc: &Document, o: Option<&Object>) -> Option<Vec<f64>> {
     o.as_array()?.iter().map(|x| doc.resolve(x).as_f64()).collect()
 }
 
-/// Leaf page objects in order: the shared page-tree walk (`pdfcraft_model::PageLeaves`).
+/// Leaf page objects in order: the shared page-tree walk (`pdfcraft_model::PageLeaves`). A tree
+/// past the walk's caps gives the pages before the cut, which is what reading fields needs.
 pub(crate) fn page_refs(doc: &Document) -> Vec<ObjRef> {
     pdfcraft_model::page_refs(doc)
+}
+
+/// [`page_refs`] for an edit: an error when the walk stopped at a cap, since a page past the cut
+/// would read as missing (a field added there refused, a deleted field's widget left on it).
+pub(crate) fn whole_page_refs(doc: &Document) -> Result<Vec<ObjRef>, FormError> {
+    whole(pdfcraft_model::PageLeaves::new(doc))
+}
+
+/// [`whole_page_refs`] over `leaves`.
+pub(crate) fn whole(mut leaves: pdfcraft_model::PageLeaves<'_>) -> Result<Vec<ObjRef>, FormError> {
+    let refs: Vec<ObjRef> = leaves.by_ref().map(|leaf| leaf.obj).collect();
+    if leaves.truncated() {
+        return Err(FormError::Invalid("the page tree is too large to edit".into()));
+    }
+    Ok(refs)
 }
 
 /// The AcroForm dictionary.

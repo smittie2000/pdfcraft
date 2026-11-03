@@ -565,9 +565,13 @@ impl Document {
         let data = s.decoded_within(self.stream_limit)?;
         let mut lx = Lexer::new(&data, 0);
         let mut index = Vec::with_capacity(n);
+        // A member listed at a start an earlier member already has is unusable: one object's
+        // bytes read as several object numbers would let a walk keyed by number visit them under
+        // each (N aliases of an N-entry /Pages node read N^2 entries). The first number keeps it.
+        let mut starts = std::collections::HashSet::with_capacity(n);
         for _ in 0..n {
             let (Some(Object::Int(onum)), Some(Object::Int(off))) = (lx.object().ok(), lx.object().ok()) else { break };
-            index.push(objstm_member(onum, off, first, data.len()));
+            index.push(objstm_member(onum, off, first, data.len()).filter(|&(_, start)| starts.insert(start)));
         }
         let stm = Arc::new(ObjStm { index, data: Arc::new(data) });
         // Same bound as the object cache: decoded object streams can be megabytes each.

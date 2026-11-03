@@ -56,6 +56,22 @@ fn document(objs: &[String]) -> Document {
     Document::open(Arc::new(out)).expect("opens")
 }
 
+/// An edit refuses a page list cut off at a cap; reading keeps the pages before the cut.
+#[test]
+fn a_page_list_cut_off_at_a_cap_is_refused_for_edits() {
+    let doc = document(&[
+        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>".into(),
+        "<< /Type /Page /Parent 2 0 R >>".into(),
+        "<< /Type /Page /Parent 2 0 R >>".into(),
+    ]);
+    let top = pdfcraft_cos::ObjRef::new(2, 0);
+    assert_eq!(crate::read::whole(pdfcraft_model::PageLeaves::with_limits(&doc, top, 100, 100)).unwrap().len(), 2);
+    assert!(crate::read::whole(pdfcraft_model::PageLeaves::with_limits(&doc, top, 100, 1)).is_err(), "past the entry cap");
+    assert!(crate::read::whole(pdfcraft_model::PageLeaves::with_limits(&doc, top, 2, 100)).is_err(), "past the node cap");
+    assert_eq!(whole_page_refs(&doc).unwrap(), page_refs(&doc));
+}
+
 fn reopen(doc: &Document) -> Document {
     let bytes = write_incremental(doc, &SaveOptions::default()).expect("writes");
     hayro_syntax::Pdf::new(bytes.clone()).expect("hayro-syntax parses the output");

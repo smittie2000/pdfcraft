@@ -41,10 +41,10 @@ mod tab_order;
 mod values;
 
 pub use appearances::{FieldAppearanceCache, declares_pdfa, need_appearances, undrawn_fields, with_field_appearances, with_field_appearances_cached};
-pub(crate) use read::page_refs;
 pub use read::{Fields, acroform, adopted_page_fields, fields, fields_with_adopted};
 #[cfg(test)]
 use read::{MAX_SCRIPT_BYTES, enumerate, form_reads};
+pub(crate) use read::{page_refs, whole_page_refs};
 use read::{script, script_budget};
 pub use tab_order::{TabOrder, move_in_tab_order, set_tab_order, tab_orders};
 #[cfg(test)]

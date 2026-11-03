@@ -213,7 +213,10 @@ fn uri_bytes(u: &str) -> Vec<u8> {
 fn write_action(doc: &Document, d: &mut Dict, a: &LinkAction) -> Result<(), AnnotError> {
     match a {
         LinkAction::Page(p) => {
-            let target = page_ref(doc, *p)?;
+            // At the generation the document holds the page at: pages are matched by number, so
+            // the page list's reference may carry a stale generation from `/Kids`.
+            let listed = page_ref(doc, *p)?;
+            let target = ObjRef { num: listed.num, generation: doc.generation(listed.num) };
             d.remove(b"A");
             d.set(b"Dest".to_vec(), Object::Array(vec![Object::Ref(target), Object::name("Fit")]));
         }

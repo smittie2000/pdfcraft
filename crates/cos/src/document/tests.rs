@@ -1437,6 +1437,16 @@ fn object_stream_negative_offsets_are_refused() {
     assert_eq!(text_of(&control, 3, b"Second").as_deref(), Some("yes"));
 }
 
+/// A member listed at the same start as an earlier one is not a second object: the first number
+/// keeps the bytes, so one object can't be read as many.
+#[test]
+fn object_stream_members_sharing_a_start_are_one_object() {
+    let doc = Document::open(Arc::new(object_stream_file("7 0 3 0 ", "<< /Shared (yes) >>", 1))).unwrap();
+    assert!(matches!(*doc.get(ObjRef::new(3, 0)), Object::Null), "{:?}", doc.get(ObjRef::new(3, 0)));
+    let control = Document::open(Arc::new(object_stream_file("7 0 3 19 ", "<< /First (yes) >> << /Second (yes) >>", 1))).unwrap();
+    assert_eq!(text_of(&control, 3, b"Second").as_deref(), Some("yes"));
+}
+
 #[test]
 fn revision_ends_split_incremental_updates() {
     let mut bytes = build(&["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [] /Count 0 >>"], "/Root 1 0 R");

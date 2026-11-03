@@ -2,7 +2,7 @@ use super::look::redraw_field;
 use super::tree::{add_to_page, attach, clash, detach, ensure_form, free_name, name_parts, top_names};
 use super::{
     Dict, Document, Field, FieldKind, FormError, MIN_FIELD_SIDE, NewField, ObjRef, Object, PdfString, Widget, appearance, fields, flags, invalid,
-    page_refs, rgb,
+    rgb, whole_page_refs,
 };
 
 fn widget_dict(page: ObjRef, rect: [f64; 4]) -> Dict {
@@ -25,7 +25,7 @@ fn widget_dict(page: ObjRef, rect: [f64; 4]) -> Dict {
 
 /// Add a field on `page` (0-based) in `rect` (user space). Returns its full name.
 pub fn add_field(doc: &mut Document, page: usize, rect: [f64; 4], kind: &NewField, name: Option<&str>) -> Result<String, FormError> {
-    let pages = page_refs(doc);
+    let pages = whole_page_refs(doc)?;
     let page_ref = *pages.get(page).ok_or_else(|| FormError::Invalid(format!("page {} does not exist", page + 1)))?;
     let rect = [rect[0].min(rect[2]), rect[1].min(rect[3]), rect[0].max(rect[2]), rect[1].max(rect[3])];
     if !rect.iter().all(|v| v.is_finite()) || rect[2] - rect[0] < MIN_FIELD_SIDE || rect[3] - rect[1] < MIN_FIELD_SIDE {
@@ -269,7 +269,7 @@ fn delete_found_field(doc: &mut Document, f: Field) -> Result<(), FormError> {
 
 /// Take the annotations `widgets` off every page's `/Annots`, held directly or by reference.
 fn drop_from_pages(doc: &mut Document, widgets: &std::collections::HashSet<ObjRef>) -> Result<(), FormError> {
-    for p in page_refs(doc) {
+    for p in whole_page_refs(doc)? {
         let Some(a) = doc.get(p).as_dict().and_then(|d| d.get(b"Annots").cloned()) else { continue };
         let list = doc.resolve(&a).as_array().cloned().unwrap_or_default();
         let kept: Vec<Object> = list.iter().filter(|o| !o.as_ref().is_some_and(|r| widgets.contains(&r))).cloned().collect();
@@ -332,7 +332,7 @@ pub(super) fn split_triggers(aa: &Dict) -> (Option<Dict>, Option<Dict>) {
 pub fn duplicate_field(doc: &mut Document, name: &str, pages: &[usize]) -> Result<usize, FormError> {
     let f = fields(doc).into_iter().find(|f| f.name == name).ok_or_else(|| FormError::NoSuchField(name.into()))?;
     let model = f.widgets.first().cloned().ok_or_else(|| FormError::Invalid(format!("{name} has no widget")))?;
-    let refs = page_refs(doc);
+    let refs = whole_page_refs(doc)?;
     for p in pages {
         if *p >= refs.len() {
             return invalid(format!("page {} does not exist", p + 1));
@@ -381,7 +381,7 @@ pub fn duplicate_field(doc: &mut Document, name: &str, pages: &[usize]) -> Resul
 /// Split field `f`, which is also its only widget `model`, into a field and one widget kid that
 /// takes the widget's keys and its place in the page's `/Annots`. Returns the kid.
 pub(super) fn split_merged(doc: &mut Document, f: &Field, model: &Widget) -> Result<ObjRef, FormError> {
-    let refs = page_refs(doc);
+    let refs = whole_page_refs(doc)?;
     let d = doc.get(f.obj).as_dict().cloned().unwrap_or_default();
     let mut kid = Dict::new();
     for k in WIDGET_KEYS {
