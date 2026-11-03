@@ -3,9 +3,10 @@
 
 /// Element nesting depth of `text`, skipping comments, CDATA, processing instructions, the DOCTYPE
 /// and quoted attribute values. A tag that closes itself (`<field/>`) is one level while it is read
-/// and does not stay open, so a long run of them cannot accumulate into the bound. It cannot
+/// and does not stay open, so a long run of them cannot accumulate into the bound. A DOCTYPE is
+/// skipped whole, its internal subset and quoted literals included. Outside a DTD it cannot
 /// under-count a real element; a stray `<` in text is invalid XML and only makes it over-count,
-/// which errs towards refusing the document.
+/// which errs towards refusing the document. (Every caller also parses with DTDs refused.)
 pub fn xml_nesting_depth(text: &str) -> usize {
     xml_shape(text).depth
 }
@@ -41,7 +42,7 @@ pub fn xml_shape(text: &str) -> XmlShape {
         } else if b[i..].starts_with(b"<?") {
             i = find(b, i + 2, b"?>").map_or(b.len(), |p| p + 2);
         } else if b[i..].starts_with(b"<!") {
-            i = find(b, i + 2, b">").map_or(b.len(), |p| p + 1);
+            i = declaration_end(b, i + 2);
         } else if b[i..].starts_with(b"</") {
             depth = depth.saturating_sub(1);
             i = find(b, i + 2, b">").map_or(b.len(), |p| p + 1);
@@ -84,6 +85,34 @@ pub fn xml_shape(text: &str) -> XmlShape {
     shape
 }
 
+/// Past the end of the declaration (`<!DOCTYPE …>`, or another `<!…>`) whose body starts at
+/// `from`: its `>`, skipping quoted literals and, for a DOCTYPE, its internal subset (`[ … ]`, where
+/// an entity value or a comment can hold `>` and `<`). One forward pass; an unterminated
+/// declaration runs to the end of the text.
+fn declaration_end(b: &[u8], from: usize) -> usize {
+    let (mut i, mut quote, mut subset) = (from, 0u8, false);
+    while let Some(&c) = b.get(i) {
+        i += 1;
+        if quote != 0 {
+            if c == quote {
+                quote = 0;
+            }
+        } else if subset && c == b'<' && b.get(i..).is_some_and(|s| s.starts_with(b"!--")) {
+            // A comment in the subset, which may hold a lone quote.
+            i = b.get(i + 3..).and_then(|s| s.windows(3).position(|w| w == b"-->")).map_or(b.len(), |p| i + 3 + p + 3);
+        } else {
+            match c {
+                b'"' | b'\'' => quote = c,
+                b'[' => subset = true,
+                b']' => subset = false,
+                b'>' if !subset => return i,
+                _ => {}
+            }
+        }
+    }
+    b.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::xml_nesting_depth as d;
@@ -111,6 +140,18 @@ mod tests {
         assert_eq!(d("<a><b><c></c></b></a>"), 3);
         assert_eq!(d(""), 0);
         assert_eq!(d("<a><b"), 2, "an unterminated tag still counts");
+    }
+
+    /// A DOCTYPE's internal subset is skipped whole: markup in an entity value or a comment
+    /// there is not counted, and a `>` inside it does not end the DOCTYPE.
+    #[test]
+    fn a_doctype_internal_subset_is_skipped() {
+        assert_eq!(d(r#"<!DOCTYPE a [<!ENTITY e "<x><y><z>">]><a/>"#), 1);
+        assert_eq!(d(r#"<!DOCTYPE r [<!ENTITY e "a> <y q=">]><r><a/></r>"#), 2);
+        assert_eq!(d(r#"<!DOCTYPE r SYSTEM "a>b"><r><a/></r>"#), 2);
+        assert_eq!(d("<!DOCTYPE r [<!-- it's > --><!ENTITY e 'v'>]><r><a/></r>"), 2);
+        assert_eq!(d("<!DOCTYPE r [<!ENTITY e 'v'"), 0, "an unterminated subset runs to the end");
+        assert_eq!(d(&format!("<!DOCTYPE r [{}<r/>", "[".repeat(100_000))), 0, "one pass");
     }
 
     /// Each unquoted `=` in a start tag is an attribute; one in a quoted value, an end tag,
