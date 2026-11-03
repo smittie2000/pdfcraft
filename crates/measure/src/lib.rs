@@ -483,8 +483,10 @@ pub fn list(doc: &Document) -> Listing {
     let mut count = 0usize;
     let mut kept = 0usize;
     let mut seen = std::collections::HashSet::new();
-    for (page, p) in pdfcraft_model::pages(doc).iter().enumerate() {
-        let Some(o) = p.dict.get(b"Annots") else { continue };
+    // The leaf walk, not `pages()`: `/Annots` is the page's own (never inherited), and `pages()`
+    // stops at its copy budget, so a measurement `add` put on a later page would not be listed.
+    for (page, leaf) in pdfcraft_model::PageLeaves::new(doc).enumerate() {
+        let Some(o) = leaf.dict().and_then(|d| d.get(b"Annots")) else { continue };
         let o = doc.resolve(o);
         let Some(arr) = o.as_array() else { continue };
         for (index, a) in arr.iter().enumerate() {

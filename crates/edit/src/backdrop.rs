@@ -113,9 +113,8 @@ impl Paint {
 /// The backdrop `page` (0-based) paints, if any. Finding the page walks the page tree, so to
 /// check many pages use [`page_backdrops`], which walks it once.
 pub fn page_backdrop(doc: &Document, page: usize) -> Result<Option<Backdrop>, EditError> {
-    let all = pdfcraft_model::pages(doc);
-    let p = all.get(page).ok_or(EditError::NoSuchPage(page))?;
-    Ok(scan(doc, p, None).map(|(b, _)| b))
+    let p = pdfcraft_model::page(doc, page).ok_or(EditError::NoSuchPage(page))?;
+    Ok(scan(doc, &p, None).map(|(b, _)| b))
 }
 
 /// The backdrop each of `pages` (0-based) paints, in the same order, walking the page tree once.
