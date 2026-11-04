@@ -276,6 +276,30 @@ fn pem_with_lax_trailing_padding_still_loads() {
     assert!(matches!(load(too_much.as_bytes()), Err(SignError::Malformed(m)) if m == "PEM base64"));
 }
 
+/// Non-zero bits after the last byte are not canonical base64 (RFC 4648 §3.5): the old reader
+/// dropped them and loaded the file.
+#[test]
+fn pem_with_non_canonical_trailing_bits_is_malformed() {
+    use pdfcraft_sign::x509::load_certificates as load;
+    // ca.crt.pem ends its body with "pA==": `A` leaves the four bits after the last byte zero,
+    // `B` sets one of them.
+    let text = String::from_utf8(data("ca.crt.pem")).unwrap();
+    assert!(text.contains("pA==\n-----END"), "the fixture ends its body with pA==");
+    let noisy = text.replace("pA==\n-----END", "pB==\n-----END");
+    assert!(matches!(load(noisy.as_bytes()), Err(SignError::Malformed(m)) if m == "PEM base64"));
+}
+
+/// A body of 4k + 1 base64 characters ends in six bits, not a byte: the old reader dropped the
+/// last character and loaded the file.
+#[test]
+fn pem_with_a_one_character_tail_is_malformed() {
+    use pdfcraft_sign::x509::load_certificates as load;
+    let text = String::from_utf8(data("rsa.crt.pem")).unwrap();
+    assert!(!text.contains('='), "the fixture's body is a whole number of quanta");
+    let tail = text.replace("\n-----END", "A\n-----END");
+    assert!(matches!(load(tail.as_bytes()), Err(SignError::Malformed(m)) if m == "PEM base64"));
+}
+
 /// RFC 7468 counts the vertical tab as whitespace in a PEM body; `is_ascii_whitespace` does not.
 #[test]
 fn a_vertical_tab_inside_a_pem_body_is_whitespace() {
@@ -296,6 +320,12 @@ fn a_pkcs12_without_base64_padding_still_opens() {
     assert!(b64.ends_with('='), "the fixture's base64 needs padding");
     let unpadded = b64.trim_end_matches('=');
     assert_eq!(pkcs12::open(unpadded.as_bytes(), "test").unwrap().certificate, signer.certificate);
+    // Zero to two `=` at the end is the lax grammar whatever padding the length needs (this
+    // fixture's canonical padding is two).
+    for pad in ["=", "=="] {
+        let padded = format!("{unpadded}{pad}");
+        assert_eq!(pkcs12::open(padded.as_bytes(), "test").unwrap().certificate, signer.certificate, "{pad}");
+    }
     let with_tab = format!("{}\u{b}{}", &unpadded[..8], &unpadded[8..]);
     assert_eq!(pkcs12::open(with_tab.as_bytes(), "test").unwrap().certificate, signer.certificate, "a vertical tab is whitespace");
     let pem = format!("-----BEGIN PKCS12-----\n{unpadded}\n-----END PKCS12-----\n");
