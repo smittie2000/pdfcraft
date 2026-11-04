@@ -1,0 +1,52 @@
+name: "Launch check probe (fork only)"
+
+# Proves the windows-launch-check action tells apart releases that the winget-pkgs
+# validator rejected from ones it accepted. Not for upstream.
+on:
+  workflow_dispatch:
+  push:
+    branches: [probe/launch-check]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: ${{ matrix.repo }} ${{ matrix.tag }} (expect ${{ matrix.expect }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { repo: filmcraft, tag: v0.13.0, exe: filmcraft.exe, expect: failure } # validator: Executable-Error x3
+          - { repo: filmcraft, tag: v0.14.0, exe: filmcraft.exe, expect: success } # validator: passed
+          - { repo: pdfcraft,  tag: v0.18.0, exe: pdfcraft.exe,  expect: failure } # validator: Executable-Error
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download MSI
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download ${{ matrix.tag }} -R storytold/${{ matrix.repo }} -p '*windows-x64.msi' -D msi
+          Get-ChildItem msi
+          "MSI=$((Get-ChildItem msi\*.msi | Select-Object -First 1).FullName)" >> $env:GITHUB_ENV
+      - name: Desktop / GPU on this runner
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_VideoController | ForEach-Object { "adapter: $($_.Name)" }
+          "session: $((Get-Process -Id $PID).SessionId)  user: $env:USERNAME"
+      - name: Launch check
+        id: check
+        continue-on-error: true
+        uses: smittie2000/craft-common-actions/actions/windows-launch-check@windows-launch-check
+        with:
+          msi: ${{ env.MSI }}
+          main-exe: ${{ matrix.exe }}
+      - name: Verdict matches the validator
+        shell: pwsh
+        run: |
+          $got = '${{ steps.check.outcome }}'
+          "expected ${{ matrix.expect }}, got $got"
+          if ($got -ne '${{ matrix.expect }}') { exit 1 }
