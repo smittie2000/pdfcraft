@@ -624,6 +624,27 @@ endstream"
     case("[0 0 100 50]", "/Matrix [1 0 1 1 0 0]", "[100 600 200 650]", Some(2));
 }
 
+/// A filled-in field whose appearance can't be placed stays on the page and in the form, as one
+/// with no appearance does (#1794): removing it would lose the value with nothing in its place.
+#[test]
+fn flattening_keeps_a_valued_widget_whose_appearance_cannot_be_placed() {
+    let page = stream("", " ");
+    let mut doc = build(&[
+        "<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [4 0 R] >> >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << >> /Contents 5 0 R /Annots [4 0 R] >>",
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (Ada) /Rect [100 600 200 650] /F 4 /AP << /N 6 0 R >> >>",
+        &page,
+        "<< /Type /XObject /Subtype /Form /BBox [0 0 1e400 50] /Length 15 >>\nstream\n0 0 100 50 re f\nendstream",
+    ]);
+    let before = streams(&doc, 0);
+    assert_eq!(flatten(&mut doc, &[0], false, true).unwrap(), 0, "nothing is drawn");
+    let doc = reopen(&doc);
+    let annots = pdfcraft_model::pages(&doc)[0].dict.get(b"Annots").and_then(|a| doc.resolve(a).as_array().map(|a| a.len()));
+    assert_eq!(annots, Some(1), "the field stays on the page");
+    assert_eq!(streams(&doc, 0), before, "no cm is written");
+}
+
 /// #805: a supported note with no stored appearance is still drawn by viewers. Flattening must
 /// generate that appearance and bake it into the page, not delete a comment that shows an icon.
 #[test]

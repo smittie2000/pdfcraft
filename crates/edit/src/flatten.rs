@@ -61,9 +61,19 @@ fn has_value(doc: &Document, widget: &Dict) -> bool {
     true
 }
 
-/// Algorithm 8.1: the matrix that maps the form's bounding box onto the annotation rectangle.
-fn placement(doc: &Document, form: &Dict, rect: [f64; 4]) -> Option<[f64; 6]> {
-    let bbox = nums(doc, form.get(b"BBox")).filter(|b| b.len() == 4)?;
+/// Where an appearance goes on the page.
+enum Placement {
+    /// Algorithm 8.1: the matrix that maps the form's bounding box onto the annotation rectangle.
+    At([f64; 6]),
+    /// No usable bounding box, or one with no area (replies, for example): nothing to draw.
+    Empty,
+    /// The numbers give no matrix: a box corner isn't finite, or a scale comes out as 0, inf or
+    /// NaN (a box too wide for f64, a rectangle that isn't finite).
+    Unplaceable,
+}
+
+fn placement(doc: &Document, form: &Dict, rect: [f64; 4]) -> Placement {
+    let Some(bbox) = nums(doc, form.get(b"BBox")).filter(|b| b.len() == 4) else { return Placement::Empty };
     let m = nums(doc, form.get(b"Matrix")).and_then(|m| <[f64; 6]>::try_from(m).ok()).map_or(Matrix::IDENTITY, Matrix);
     let corners = [(bbox[0], bbox[1]), (bbox[2], bbox[1]), (bbox[0], bbox[3]), (bbox[2], bbox[3])].map(|(x, y)| {
         let (u, v) = m.apply(x, y);
@@ -71,15 +81,15 @@ fn placement(doc: &Document, form: &Dict, rect: [f64; 4]) -> Option<[f64; 6]> {
     });
     // A non-finite corner refuses the box: a fold seeded with f64::MAX passed over it and placed the
     // appearance by the corners that were left.
-    let [x0, y0, x1, y1] = pdfcraft_geom::bounds(corners)?;
+    let Some([x0, y0, x1, y1]) = pdfcraft_geom::bounds(corners) else { return Placement::Unplaceable };
     if x1 - x0 < 1e-9 || y1 - y0 < 1e-9 {
-        return None; // empty appearance (e.g. replies): nothing to draw
+        return Placement::Empty;
     }
     let (sx, sy) = ((rect[2] - rect[0]) / (x1 - x0), (rect[3] - rect[1]) / (y1 - y0));
     let out = [sx, 0.0, 0.0, sy, rect[0] - x0 * sx, rect[1] - y0 * sy];
     // A box too wide for f64 scales to 0 and an infinite /Rect to inf or NaN: neither is a matrix
-    // that can be written into the page, so the appearance is not drawn and the comment stays.
-    (out.iter().all(|v| v.is_finite()) && sx != 0.0 && sy != 0.0).then_some(out)
+    // that can be written into the page.
+    if out.iter().all(|v| v.is_finite()) && sx != 0.0 && sy != 0.0 { Placement::At(out) } else { Placement::Unplaceable }
 }
 
 /// `m` followed by a turn of `degrees` (the page's /Rotate) about the upper-left corner of
@@ -258,15 +268,20 @@ fn flatten_in(doc: &mut Document, pages: &[usize], which: Which) -> Result<usize
             }
             let rect = nums(doc, d.get(b"Rect")).filter(|r| r.len() == 4).map(|r| [r[0].min(r[2]), r[1].min(r[3]), r[0].max(r[2]), r[1].max(r[3])]);
             let mut drew = false;
+            let mut unplaceable = false;
             if let (Some(ap), Some(rect)) = (appearance(doc, d), rect) {
                 let form = doc.get(ap).as_dict().cloned().unwrap_or_default();
-                if let Some(m) = placement(doc, &form, rect) {
-                    let m = if flags & NO_ROTATE != 0 { upright(m, rotation, rect) } else { m };
-                    let name = xobject_name(&existing_xo, &xobjects, &mut name_n);
-                    content.push_str(&format!("q {} {} {} {} {} {} cm /{name} Do Q\n", n(m[0]), n(m[1]), n(m[2]), n(m[3]), n(m[4]), n(m[5])));
-                    xobjects.set(name.into_bytes(), Object::Ref(ap));
-                    drawn += 1;
-                    drew = true;
+                match placement(doc, &form, rect) {
+                    Placement::At(m) => {
+                        let m = if flags & NO_ROTATE != 0 { upright(m, rotation, rect) } else { m };
+                        let name = xobject_name(&existing_xo, &xobjects, &mut name_n);
+                        content.push_str(&format!("q {} {} {} {} {} {} cm /{name} Do Q\n", n(m[0]), n(m[1]), n(m[2]), n(m[3]), n(m[4]), n(m[5])));
+                        xobjects.set(name.into_bytes(), Object::Ref(ap));
+                        drawn += 1;
+                        drew = true;
+                    }
+                    Placement::Empty => {}
+                    Placement::Unplaceable => unplaceable = true,
                 }
             }
             // A comment whose ink was not written into the page stays. Removing it would drop
@@ -275,9 +290,10 @@ fn flatten_in(doc: &mut Document, pages: &[usize], which: Which) -> Result<usize
             // stored, or none for its selected state): removing it would lose the field's value
             // with nothing in its place (#1794). One whose appearance draws nothing (an empty
             // stream) shows nothing anywhere, so flattening still removes it, and so does one whose
-            // field has no value: there is nothing to lose (#4017).
+            // field has no value: there is nothing to lose (#4017). One whose appearance can't be
+            // placed (a box or rectangle that isn't finite) stays as if it had none.
             if !drew {
-                let keep = appearance(doc, d).is_none() && (!widget || has_value(doc, d));
+                let keep = (appearance(doc, d).is_none() || unplaceable) && (!widget || has_value(doc, d));
                 if keep && let Some(r) = entry.as_ref() {
                     undrawn.insert(r);
                 }
