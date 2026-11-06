@@ -4492,6 +4492,9 @@ dependencies = [
 [[package]]
 name = "pdfcraft-geom"
 version = "0.18.1"
+dependencies = [
+ "proptest",
+]
 
 [[package]]
 name = "pdfcraft-js"
