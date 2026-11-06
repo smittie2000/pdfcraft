@@ -640,8 +640,11 @@ fn flattening_keeps_a_valued_widget_whose_appearance_cannot_be_placed() {
     let before = streams(&doc, 0);
     assert_eq!(flatten(&mut doc, &[0], false, true).unwrap(), 0, "nothing is drawn");
     let doc = reopen(&doc);
-    let annots = pdfcraft_model::pages(&doc)[0].dict.get(b"Annots").and_then(|a| doc.resolve(a).as_array().map(|a| a.len()));
-    assert_eq!(annots, Some(1), "the field stays on the page");
+    let refs = |o: &Object| -> Vec<u32> { doc.resolve(o).as_array().unwrap().iter().filter_map(|f| f.as_ref()).map(|r| r.num).collect() };
+    assert_eq!(refs(pdfcraft_model::pages(&doc)[0].dict.get(b"Annots").unwrap()), [4], "the field stays on the page");
+    let root = doc.root().unwrap();
+    let af = doc.resolve(doc.get(root).as_dict().unwrap().get(b"AcroForm").unwrap());
+    assert_eq!(refs(af.as_dict().unwrap().get(b"Fields").unwrap()), [4], "and in the form");
     assert_eq!(streams(&doc, 0), before, "no cm is written");
 }
 
