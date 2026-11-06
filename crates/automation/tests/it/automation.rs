@@ -353,6 +353,29 @@ fn saving_a_repaired_file_puts_the_repair_on_disk() {
     assert_eq!(info["pages"].as_array().unwrap().len(), 2);
 }
 
+/// `doc_info` lists an object read with a number that has no finite value under
+/// `read_leniencies`, not under `repairs`: the file was not repaired, but a save can't write that
+/// number back as it was. A clean file lists none.
+#[test]
+fn doc_info_lists_numbers_read_with_no_finite_value() {
+    let dir = workdir("read-leniencies");
+    let long = format!("1{}", "0".repeat(400));
+    let page = format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /UserUnit {long} >>");
+    let bytes =
+        pdfcraft_testkit::Pdf::new().obj("<< /Type /Catalog /Pages 2 0 R >>").obj("<< /Type /Pages /Kids [3 0 R] /Count 1 >>").obj(page).build();
+    std::fs::write(dir.join("overflow.pdf"), &bytes).unwrap();
+    std::fs::write(dir.join("clean.pdf"), fixture(1)).unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "overflow.pdf" }))["doc"].as_u64().unwrap();
+    let info = ok(&mut a, "doc_info", json!({ "doc": doc }));
+    let listed = info["read_leniencies"].as_array().unwrap();
+    assert!(listed.iter().any(|l| l.as_str().unwrap_or("").starts_with("object 3:")), "{info}");
+    assert_eq!(info["repairs"].as_array().unwrap().len(), 0, "{}", info["repairs"]);
+    let clean = ok(&mut a, "doc_open", json!({ "path": "clean.pdf" }))["doc"].as_u64().unwrap();
+    let info = ok(&mut a, "doc_info", json!({ "doc": clean }));
+    assert_eq!(info["read_leniencies"].as_array().unwrap().len(), 0, "{}", info["read_leniencies"]);
+}
+
 /// Custom document properties through the tools: set and cleared with doc_set_info under any
 /// name the spec does not use, listed by doc_info apart from the standard entries, bad names
 /// refused without a change.

@@ -631,6 +631,13 @@ impl Document {
     pub fn repair_log(&self) -> Vec<String> {
         self.editor.as_ref().map(|e| e.cos.repair_log().to_vec()).unwrap_or_default()
     }
+
+    /// Objects read so far that hold a number with no finite value, which a save can't write back
+    /// as it was ([`pdfcraft_cos::Document::read_leniencies`]). Not repairs: the damaged-file
+    /// notice reads [`Self::repair_log`] alone.
+    pub fn read_leniencies(&self) -> Vec<String> {
+        self.editor.as_ref().map(|e| e.cos.read_leniencies()).unwrap_or_default()
+    }
 }
 
 /// A title that names no document: what a web browser writes when it saves a blank page or a

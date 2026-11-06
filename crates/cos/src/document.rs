@@ -6,12 +6,12 @@
 //! the file (full save).
 
 use std::borrow::Cow;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
 
 use crate::CosError;
 use crate::object::{Dict, MAX_DECODED, MAX_JBIG2_GLOBALS, ObjRef, Object, Stream};
-use crate::parser::{EndstreamIndex, Lexer, is_whitespace, parse_indirect, parse_indirect_shared};
+use crate::parser::{EndstreamIndex, Lexer, is_whitespace, parse_indirect, parse_indirect_shared, parse_indirect_shared_counted};
 
 mod objects;
 mod open;
@@ -67,6 +67,9 @@ pub struct Document {
     encrypt_members: Arc<HashSet<u32>>,
     /// Object numbers a scan of the file didn't find: the file doesn't change, so it never will.
     unfound: Arc<Mutex<HashSet<u32>>>,
+    /// Objects read from the file holding a number with no finite value (see
+    /// [`Document::read_leniencies`]). Filled as objects load, like `unfound`.
+    nonfinite_reads: Arc<Mutex<BTreeSet<u32>>>,
     /// Encryption was added, changed or removed since opening: only a full save can apply it.
     encryption_changed: bool,
     /// Set by edits that must not leave earlier revisions in the file (redaction).

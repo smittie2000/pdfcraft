@@ -33,11 +33,14 @@ pub struct Lexer<'a> {
     pub pos: usize,
     /// Objects built by the current top-level [`Lexer::object`] call.
     nodes: usize,
+    /// Numbers read so far that have no finite value (an overflowing integer or real, or a
+    /// signed `inf`/`nan` word): see [`Lexer::nonfinite_numbers`].
+    nonfinite: usize,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(data: &'a [u8], pos: usize) -> Self {
-        Self { data, pos: pos.min(data.len()), nodes: 0 }
+        Self { data, pos: pos.min(data.len()), nodes: 0, nonfinite: 0 }
     }
 
     fn peek(&self) -> Option<u8> {
@@ -335,6 +338,22 @@ impl<'a> Lexer<'a> {
         Ok(first)
     }
 
+    /// How many numbers this lexer has read that have no finite value: a digit string too long
+    /// for an `f64` (`1` followed by 400 zeros, `1e400`) or a signed `inf`/`nan` word, which
+    /// `f64::from_str` accepts. They are still returned as they are (`Object::Real` of ±inf or
+    /// NaN); the count lets the document record that such a value was read.
+    pub fn nonfinite_numbers(&self) -> usize {
+        self.nonfinite
+    }
+
+    /// `v` as a real, counted when it isn't finite.
+    fn real(&mut self, v: f64) -> Object {
+        if !v.is_finite() {
+            self.nonfinite = self.nonfinite.saturating_add(1);
+        }
+        Object::Real(v)
+    }
+
     fn number(&mut self) -> Result<Object, CosError> {
         let start = self.pos;
         let tok = self.token();
@@ -347,7 +366,7 @@ impl<'a> Lexer<'a> {
             let t = s.trim_start_matches('+');
             let cleaned = if t.as_bytes().windows(2).any(|w| w == b"--") { std::borrow::Cow::Owned(t.replacen("--", "-", 1)) } else { t.into() };
             let v = cleaned.get(..real_prefix_len(cleaned.as_bytes())).and_then(|p| parse_counted::<f64>(p).ok());
-            return Ok(Object::Real(v.unwrap_or(0.0)));
+            return Ok(self.real(v.unwrap_or(0.0)));
         }
         // Tolerate a doubled sign ("--280") like the real branch does.
         let t = s.trim_start_matches('+');
@@ -356,7 +375,7 @@ impl<'a> Lexer<'a> {
             Ok(v) => Ok(Object::Int(v)),
             Err(_) => {
                 // Out-of-range integers are treated as reals (§7.3.3 allows implementation limits).
-                cleaned.parse::<f64>().map(Object::Real).map_err(|_| CosError::Syntax { offset: start, detail: format!("bad number {s:?}") })
+                cleaned.parse::<f64>().map(|v| self.real(v)).map_err(|_| CosError::Syntax { offset: start, detail: format!("bad number {s:?}") })
             }
         }
     }
@@ -414,7 +433,7 @@ fn hexval(b: u8) -> Option<u8> {
 /// Parse an indirect object at `offset`: `N G obj <object> [stream…endstream] endobj`.
 /// `resolve_length` resolves an indirect `/Length`. Returns the object and its (num, gen).
 pub fn parse_indirect(data: &[u8], offset: usize, resolve_length: &dyn Fn(ObjRef) -> Option<i64>) -> Result<(ObjRef, Object), CosError> {
-    parse_indirect_in(data, None, offset, resolve_length, None)
+    parse_indirect_in(data, None, offset, resolve_length, None).map(|(id, o, _)| (id, o))
 }
 
 /// [`parse_indirect`] for a document's own bytes: stream data points into `data` instead of
@@ -426,6 +445,17 @@ pub(crate) fn parse_indirect_shared(
     resolve_length: &dyn Fn(ObjRef) -> Option<i64>,
     endstreams: &EndstreamIndex,
 ) -> Result<(ObjRef, Object), CosError> {
+    parse_indirect_shared_counted(data, offset, resolve_length, endstreams).map(|(id, o, _)| (id, o))
+}
+
+/// [`parse_indirect_shared`], also giving how many numbers in the object have no finite value
+/// ([`Lexer::nonfinite_numbers`]), for the document to record.
+pub(crate) fn parse_indirect_shared_counted(
+    data: &Arc<Vec<u8>>,
+    offset: usize,
+    resolve_length: &dyn Fn(ObjRef) -> Option<i64>,
+    endstreams: &EndstreamIndex,
+) -> Result<(ObjRef, Object, usize), CosError> {
     parse_indirect_in(data, Some(data), offset, resolve_length, Some(endstreams))
 }
 
@@ -446,7 +476,7 @@ fn parse_indirect_in(
     offset: usize,
     resolve_length: &dyn Fn(ObjRef) -> Option<i64>,
     endstreams: Option<&EndstreamIndex>,
-) -> Result<(ObjRef, Object), CosError> {
+) -> Result<(ObjRef, Object, usize), CosError> {
     let mut lx = Lexer::new(data, offset);
     lx.skip_ws();
     let num_tok = lx.token();
@@ -463,7 +493,7 @@ fn parse_indirect_in(
     let obj = match lx.object() {
         Ok(o) => o,
         // "N G obj endobj" (empty) is treated as null.
-        Err(_) if lx.eat_keyword(b"endobj") => return Ok((id, Object::Null)),
+        Err(_) if lx.eat_keyword(b"endobj") => return Ok((id, Object::Null, lx.nonfinite_numbers())),
         Err(e) => return Err(e),
     };
     lx.skip_ws();
@@ -519,9 +549,9 @@ fn parse_indirect_in(
         .ok_or_else(|| CosError::Syntax { offset: start, detail: "stream data past the end of the file".into() })?;
         let mut dict = dict.clone();
         dict.set(b"Length".to_vec(), Object::Int(raw.len() as i64));
-        return Ok((id, Object::Stream(Stream { dict, raw })));
+        return Ok((id, Object::Stream(Stream { dict, raw }), lx.nonfinite_numbers()));
     }
-    Ok((id, obj))
+    Ok((id, obj, lx.nonfinite_numbers()))
 }
 
 /// Offset where stream data ends (before the EOL preceding "endstream").
@@ -719,5 +749,29 @@ mod tests {
         for (token, want) in [("1.5", 1.5), ("-375.993", -375.993), ("+2.25", 2.25), ("--5.5", -5.5), ("1.2.3", 1.2), ("-.5", -0.5), ("0.0", 0.0)] {
             assert_eq!(Lexer::new(token.as_bytes(), 0).object().unwrap(), Object::Real(want), "{token}");
         }
+    }
+
+    /// A number with no finite value is counted, and still returned as it is: reading doesn't
+    /// change, the document can record it. Finite numbers, including ones too big for `i64`,
+    /// and dotted tokens with no digits (which read as 0) aren't counted.
+    #[test]
+    fn numbers_with_no_finite_value_are_counted_and_kept() {
+        let long = format!("1{}", "0".repeat(400));
+        let long_negative = format!("-{long}");
+        for token in ["1e400", "-1e400", "1.0e400", "+Infinity", "-inf", "+nan", "-nan", long.as_str(), long_negative.as_str()] {
+            let mut lx = Lexer::new(token.as_bytes(), 0);
+            let Ok(Object::Real(v)) = lx.object() else { panic!("{token} is not a real") };
+            assert!(!v.is_finite(), "{token} reads as {v}");
+            assert_eq!(lx.nonfinite_numbers(), 1, "{token}");
+        }
+        for token in ["12", "1.5", "-inf.", "99999999999999999999", "--5", "12 0 R", "(1e400)"] {
+            let mut lx = Lexer::new(token.as_bytes(), 0);
+            assert!(lx.object().is_ok(), "{token}");
+            assert_eq!(lx.nonfinite_numbers(), 0, "{token}");
+        }
+        let mut lx = Lexer::new(b"[1 +nan 1e400 3]", 0);
+        let Ok(Object::Array(items)) = lx.object() else { panic!("not an array") };
+        assert_eq!(items.len(), 4, "positions are unchanged");
+        assert_eq!(lx.nonfinite_numbers(), 2);
     }
 }

@@ -375,6 +375,9 @@ pub(crate) fn info(d: &Document) -> Value {
         })).collect::<Vec<_>>(),
         "warnings": i.warnings,
         "repairs": d.repair_log(),
+        // Objects read so far holding a number with no finite value (an overflowing number, or
+        // `inf`/`nan`): not repairs, but a save can't write those numbers back as they were.
+        "read_leniencies": d.read_leniencies(),
     })
 }
 

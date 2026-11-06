@@ -1921,3 +1921,83 @@ fn the_editor_cache_charges_a_dictionary_for_the_values_it_holds() {
     let sum = cache.values().fold(0usize, |n, o| n.saturating_add(held_bytes(o, &doc.data, 0)));
     assert_eq!(cache.owned(), sum, "the kept total is the cache's own");
 }
+
+/// A file of a catalog, a page tree with no kids, and `bodies` as objects 3 onwards.
+fn objects_file(bodies: &[&str]) -> Vec<u8> {
+    pdfcraft_testkit::Pdf::new()
+        .obj("<< /Type /Catalog /Pages 2 0 R >>")
+        .obj("<< /Type /Pages /Kids [] /Count 0 >>")
+        .objs(bodies.iter().copied())
+        .build()
+}
+
+/// An object read from the file holding a number with no finite value is listed once, however
+/// often it is read, and only once it has been read. Nothing is repaired: the value reads as
+/// before, and the repair log stays empty.
+#[test]
+fn an_object_read_with_a_number_that_has_no_finite_value_is_listed() {
+    let long = format!("1{}", "0".repeat(400));
+    let doc =
+        Document::open(Arc::new(objects_file(&[&format!("<< /UserUnit {long} >>"), "<< /Quad [0 0 +nan 1e400] >>", "<< /Clean 1.5 >>"]))).unwrap();
+    assert!(doc.read_leniencies().is_empty(), "nothing read yet");
+    for _ in 0..2 {
+        let page = doc.get(ObjRef::new(3, 0));
+        assert!(page.as_dict().and_then(|d| d.get(b"UserUnit")).and_then(Object::as_f64).is_some_and(f64::is_infinite));
+        doc.get(ObjRef::new(4, 0));
+        doc.get(ObjRef::new(5, 0));
+    }
+    let listed = doc.read_leniencies();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert!(listed[0].starts_with("object 3:") && listed[1].starts_with("object 4:"), "{listed:?}");
+    assert!(doc.repair_log().is_empty());
+    let clean = Document::open(Arc::new(objects_file(&["<< /Clean 1.5 >>"]))).unwrap();
+    clean.get(ObjRef::new(3, 0));
+    assert!(clean.read_leniencies().is_empty());
+}
+
+/// An object edited since it was read is left out: a save writes the edit, not the number.
+#[test]
+fn an_edited_object_is_no_longer_listed() {
+    let mut doc = Document::open(Arc::new(objects_file(&["<< /UserUnit 1e400 >>"]))).unwrap();
+    doc.get(ObjRef::new(3, 0));
+    assert_eq!(doc.read_leniencies().len(), 1);
+    doc.set(ObjRef::new(3, 0), Object::Dict(Dict::new()));
+    assert!(doc.read_leniencies().is_empty());
+}
+
+/// A member of an object stream is recorded like an object of its own.
+#[test]
+fn an_object_stream_member_with_such_a_number_is_listed() {
+    let doc = Document::open(Arc::new(object_stream_file("3 0 ", "<< /UserUnit 1e400 >>", 0))).unwrap();
+    assert!(doc.get(ObjRef::new(3, 0)).as_dict().is_some());
+    assert_eq!(doc.read_leniencies().len(), 1, "{:?}", doc.read_leniencies());
+    assert!(doc.read_leniencies()[0].starts_with("object 3:"));
+}
+
+/// Only the parse that is kept counts. Object 3's table entry points at object 4, which holds
+/// such a number: that parse is rejected (wrong number), the scan finds the real, clean object
+/// 3, and nothing is listed.
+#[test]
+fn a_rejected_parse_at_a_wrong_offset_is_not_recorded() {
+    let bytes = objects_file(&["<< /Clean 1 >>", "<< /Bad 1e400 >>"]);
+    let text = String::from_utf8(bytes).unwrap();
+    let at = |needle: &str| text.find(needle).unwrap();
+    let wrong = format!(
+        "{:010} 00000 n 
+",
+        at("4 0 obj")
+    );
+    let right = format!(
+        "{:010} 00000 n 
+",
+        at("3 0 obj")
+    );
+    let xref = at("
+xref
+");
+    let (head, tail) = text.split_at(xref);
+    let patched = format!("{head}{}", tail.replacen(&right, &wrong, 1));
+    let doc = Document::open(Arc::new(patched.into_bytes())).unwrap();
+    assert!(doc.get(ObjRef::new(3, 0)).as_dict().is_some_and(|d| d.get(b"Clean").is_some()));
+    assert!(doc.read_leniencies().is_empty(), "{:?}", doc.read_leniencies());
+}

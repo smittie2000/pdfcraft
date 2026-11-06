@@ -5,6 +5,7 @@ use super::state::{LENGTHS, LoadGuard, ObjStm, ObjectReader, ReadState, Slot, So
 use super::xref::{Revision, XrefEntry, XrefIndex};
 use super::{
     Arc, CosError, Cow, Dict, Document, Lexer, MAX_DECODED, MAX_JBIG2_GLOBALS, ObjRef, Object, Stream, is_whitespace, parse_indirect_shared,
+    parse_indirect_shared_counted,
 };
 
 /// The most decoded `/JBIG2Globals` a document keeps for its images to share (see
@@ -145,6 +146,28 @@ impl Document {
     /// Object `num` has an unsaved edit.
     pub fn is_edited(&self, num: u32) -> bool {
         self.overlay.contains_key(&num)
+    }
+
+    /// Objects read so far that hold a number with no finite value, one line each: a digit
+    /// string too long for an `f64` (`1` followed by 400 zeros, `1e400`) or a signed `inf`/`nan`
+    /// word. Such a value can't be written back as it was. Unlike [`Self::repair_log`], which is
+    /// what opening repaired, this grows as objects are read: an object not loaded yet isn't
+    /// listed. An object edited since is left out, because a save writes the edit.
+    pub fn read_leniencies(&self) -> Vec<String> {
+        let Ok(nums) = self.nonfinite_reads.lock() else { return Vec::new() };
+        nums.iter()
+            .filter(|n| !self.is_edited(**n))
+            .map(|n| format!("object {n}: holds a number with no finite value (an overflowing number, or inf or nan)"))
+            .collect()
+    }
+
+    /// Records that `num`, as read from the file, holds `nonfinite` numbers with no finite value.
+    fn note_nonfinite(&self, num: u32, nonfinite: usize) {
+        if nonfinite > 0
+            && let Ok(mut nums) = self.nonfinite_reads.lock()
+        {
+            nums.insert(num);
+        }
     }
 
     pub fn root(&self) -> Option<ObjRef> {
@@ -637,23 +660,31 @@ impl Document {
                     length
                 };
                 let off = offset as usize;
-                let at = |off: usize| match parse_indirect_shared(&self.data, off, &resolve, &self.endstreams) {
-                    Ok((id, o)) if id.num == num => Some(self.decrypted(id, o)),
+                let at = |off: usize| match parse_indirect_shared_counted(&self.data, off, &resolve, &self.endstreams) {
+                    Ok((id, o, nonfinite)) if id.num == num => Some((self.decrypted(id, o), nonfinite)),
                     _ => None,
                 };
-                // Offsets relative to a shifted header, or simply wrong: try both fixes.
-                at(off)
+                // Offsets relative to a shifted header, or simply wrong: try both fixes. Only the
+                // parse that is kept is recorded, never a rejected attempt.
+                let (object, nonfinite) = at(off)
                     .or_else(|| if self.header_offset == 0 { None } else { at(off.saturating_add(self.header_offset)) })
                     .or_else(|| self.located.get(&num).and_then(|(o, _)| usize::try_from(*o).ok()).and_then(at))
-                    .or_else(|| self.scan_for(num).map(|(id, o)| self.decrypted(id, o)))
-                    .ok_or(CosError::MissingObject(num))
+                    .or_else(|| self.scan_for(num).map(|(id, o, nonfinite)| (self.decrypted(id, o), nonfinite)))
+                    .ok_or(CosError::MissingObject(num))?;
+                self.note_nonfinite(num, nonfinite);
+                Ok(object)
             }
             Some(XrefEntry::InStream { stream, index }) => {
                 let stm = self.objstm(stream)?;
                 // The member at the entry's position, else wherever the stream lists `num`.
                 let at = usize::try_from(index).ok().and_then(|i| stm.index.get(i)).copied().flatten().filter(|(n, _)| *n == num);
                 let (_, off) = at.or_else(|| stm.index.iter().flatten().find(|(n, _)| *n == num).copied()).ok_or(CosError::MissingObject(num))?;
-                Lexer::new(&stm.data, off).object()
+                let mut lx = Lexer::new(&stm.data, off);
+                let object = lx.object();
+                if object.is_ok() {
+                    self.note_nonfinite(num, lx.nonfinite_numbers());
+                }
+                object
             }
         }
     }
@@ -672,7 +703,7 @@ impl Document {
             _ if self.overlay.contains_key(&num) || matches!(self.xref_entry(num), Some(XrefEntry::Free { .. })) => {
                 return Err(CosError::MissingObject(num));
             }
-            _ => Arc::new(self.scan_for(num).map(|(id, o)| self.decrypted(id, o)).ok_or(CosError::MissingObject(num))?),
+            _ => Arc::new(self.scan_for(num).map(|(id, o, _)| self.decrypted(id, o)).ok_or(CosError::MissingObject(num))?),
         };
         let Object::Stream(s) = &*loaded else { return Err(CosError::MissingObject(num)) };
         let n = s.dict.int(b"N").unwrap_or(0).clamp(0, 1_000_000) as usize;
@@ -698,7 +729,8 @@ impl Document {
 
     /// Last-resort lookup: scan the file for `num G obj`. What isn't there is remembered: each miss
     /// reads the whole file, and a file can refer to such an object from everywhere.
-    fn scan_for(&self, num: u32) -> Option<(ObjRef, Object)> {
+    /// With how many numbers in it have no finite value ([`Lexer::nonfinite_numbers`]).
+    fn scan_for(&self, num: u32) -> Option<(ObjRef, Object, usize)> {
         if self.unfound.lock().is_ok_and(|unfound| unfound.contains(&num)) {
             return None;
         }
@@ -713,10 +745,10 @@ impl Document {
             if p > 0 && !is_whitespace(data[p - 1]) {
                 continue;
             }
-            if let Ok((id, o)) = parse_indirect_shared(data, p, &|_| None, &self.endstreams)
+            if let Ok((id, o, nonfinite)) = parse_indirect_shared_counted(data, p, &|_| None, &self.endstreams)
                 && id.num == num
             {
-                found = Some((id, o)); // keep the last (newest) definition
+                found = Some((id, o, nonfinite)); // keep the last (newest) definition
             }
         }
         if found.is_none()

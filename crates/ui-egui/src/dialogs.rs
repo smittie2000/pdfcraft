@@ -879,8 +879,10 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
                     }
                     ui.end_row();
                 }
-                // What was repaired while reading a damaged file (fidelity: never silent).
-                let repairs = doc.repair_log();
+                // What was repaired while reading a damaged file, and numbers read that a save
+                // can't write back as they were (fidelity: never silent).
+                let mut repairs = doc.repair_log();
+                repairs.extend(doc.read_leniencies());
                 row(ui, "Repairs", if repairs.is_empty() { tl!("None").to_string() } else { repairs.len().to_string() });
                 if !repairs.is_empty() {
                     ui.label("");
