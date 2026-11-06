@@ -152,11 +152,16 @@ impl Document {
     /// string too long for an `f64` (`1` followed by 400 zeros, `1e400`) or a signed `inf`/`nan`
     /// word. Such a value can't be written back as it was. Unlike [`Self::repair_log`], which is
     /// what opening repaired, this grows as objects are read: an object not loaded yet isn't
-    /// listed. An object edited since is left out, because a save writes the edit.
+    /// listed. An object edited since stays listed while its edited version still holds such a
+    /// number (a save would write it as `0`), and drops off once the edit removed it.
     pub fn read_leniencies(&self) -> Vec<String> {
         let Ok(nums) = self.nonfinite_reads.lock() else { return Vec::new() };
         nums.iter()
-            .filter(|n| !self.is_edited(**n))
+            .filter(|n| match self.overlay.get(n) {
+                None => true,
+                Some(Slot::Set(_, o) | Slot::RepairedSet(_, _, o)) => holds_nonfinite(o, 0),
+                Some(Slot::Freed(_)) => false,
+            })
             .map(|n| format!("object {n}: holds a number with no finite value (an overflowing number, or inf or nan)"))
             .collect()
     }
@@ -1006,6 +1011,26 @@ const DECODE_PARMS_KEYS: [&[u8]; 13] = [
 /// How many references in a row [`Document::resolve`] follows: enough for any file, and it ends a
 /// cycle of them.
 const MAX_REFERENCE_HOPS: usize = 32;
+
+/// Whether `o` holds a real with no finite value, looking through arrays, dictionaries and a
+/// stream's dictionary. Past [`MAX_NONFINITE_DEPTH`] levels it answers yes, so a deep edited
+/// object stays listed rather than being cleared unread.
+fn holds_nonfinite(o: &Object, depth: usize) -> bool {
+    if depth > MAX_NONFINITE_DEPTH {
+        return true;
+    }
+    match o {
+        Object::Real(v) => !v.is_finite(),
+        Object::Array(items) => items.iter().any(|i| holds_nonfinite(i, depth + 1)),
+        Object::Dict(d) => d.iter().any(|(_, v)| holds_nonfinite(v, depth + 1)),
+        Object::Stream(s) => s.dict.iter().any(|(_, v)| holds_nonfinite(v, depth + 1)),
+        _ => false,
+    }
+}
+
+/// How deep [`holds_nonfinite`] looks: twice the parser's nesting limit (128), so anything read
+/// from a file is looked through whole; only an object built deeper by code is cut short.
+const MAX_NONFINITE_DEPTH: usize = 256;
 
 /// An object read in place, or the object a reference names as the document holds it: either way
 /// nothing is copied ([`Document::held`]).

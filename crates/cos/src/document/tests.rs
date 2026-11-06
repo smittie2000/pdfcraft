@@ -1957,10 +1957,14 @@ fn an_object_read_with_a_number_that_has_no_finite_value_is_listed() {
 
 /// An object edited since it was read is left out: a save writes the edit, not the number.
 #[test]
-fn an_edited_object_is_no_longer_listed() {
+fn an_edited_object_is_listed_while_it_still_holds_such_a_number() {
     let mut doc = Document::open(Arc::new(objects_file(&["<< /UserUnit 1e400 >>"]))).unwrap();
     doc.get(ObjRef::new(3, 0));
     assert_eq!(doc.read_leniencies().len(), 1);
+    // An edit that keeps the value (a save would write it as 0) keeps it listed.
+    doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"Rotate".to_vec(), Object::Int(90))).unwrap();
+    assert_eq!(doc.read_leniencies().len(), 1, "{:?}", doc.read_leniencies());
+    // One that replaces it doesn't.
     doc.set(ObjRef::new(3, 0), Object::Dict(Dict::new()));
     assert!(doc.read_leniencies().is_empty());
 }
@@ -1982,21 +1986,12 @@ fn a_rejected_parse_at_a_wrong_offset_is_not_recorded() {
     let bytes = objects_file(&["<< /Clean 1 >>", "<< /Bad 1e400 >>"]);
     let text = String::from_utf8(bytes).unwrap();
     let at = |needle: &str| text.find(needle).unwrap();
-    let wrong = format!(
-        "{:010} 00000 n 
-",
-        at("4 0 obj")
-    );
-    let right = format!(
-        "{:010} 00000 n 
-",
-        at("3 0 obj")
-    );
-    let xref = at("
-xref
-");
-    let (head, tail) = text.split_at(xref);
+    // The test is about a wrong table offset, so the table entry is rewritten by hand.
+    let wrong = format!("{:010} 00000 n \n", at("4 0 obj"));
+    let right = format!("{:010} 00000 n \n", at("3 0 obj"));
+    let (head, tail) = text.split_at(at("\nxref\n"));
     let patched = format!("{head}{}", tail.replacen(&right, &wrong, 1));
+    assert_ne!(patched, text, "the table entry was rewritten");
     let doc = Document::open(Arc::new(patched.into_bytes())).unwrap();
     assert!(doc.get(ObjRef::new(3, 0)).as_dict().is_some_and(|d| d.get(b"Clean").is_some()));
     assert!(doc.read_leniencies().is_empty(), "{:?}", doc.read_leniencies());
