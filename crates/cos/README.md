@@ -39,7 +39,7 @@ let bytes = write_full(&doc, &SaveOptions::default())?;         // garbage-colle
 Both writers **return the bytes**; the caller decides where they go, which is what lets the engine
 produce a working file in memory after every edit and keep saving atomic.
 
-Useful alongside: `doc.repair_log()` (what was reconstructed), `doc.revisions()` and
+Useful alongside: `doc.repair_log()` (what was reconstructed), `doc.read_leniencies()` (objects read so far holding a number with no finite value, such as `1e400` or `+nan`, which a save can't write back as it was; they still read as they are), `doc.revisions()` and
 `doc.revision_ends()` (the incremental history), `doc.is_edited(num)` and `doc.modified_objects()`,
 `doc.permissions()` and `doc.security()`, `doc.set_encryption()` / `doc.remove_encryption()`, and
 `doc.require_full_save()` for edits that cannot be expressed incrementally.
