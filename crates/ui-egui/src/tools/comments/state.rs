@@ -419,17 +419,15 @@ impl PageCx<'_> {
     /// Where a comment is on screen: one rectangle, or one per marked line for text markup.
     pub(crate) fn screen_rects<'b>(&'b self, a: &'b Annotation) -> impl Iterator<Item = Rect> + 'b {
         let quads = if is_markup(&a.subtype) { a.quads.as_slice() } else { &[] };
-        let fallback = quads.is_empty().then(|| self.screen_rect(a));
-        quads
+        // A quad with a corner that isn't finite (±inf from an overlong number) has no box. A fold
+        // seeded with f32::MAX turned it into a rectangle over the whole page, which took every press.
+        let mut rects = quads
             .iter()
-            .map(|q| {
-                let xs = [q[0], q[2], q[4], q[6]];
-                let ys = [q[1], q[3], q[5], q[7]];
-                let (x0, x1) = (xs.iter().copied().fold(f32::MAX, f32::min), xs.iter().copied().fold(f32::MIN, f32::max));
-                let (y0, y1) = (ys.iter().copied().fold(f32::MAX, f32::min), ys.iter().copied().fold(f32::MIN, f32::max));
-                self.xf.user_rect(self.info, self.page, [x0, y0, x1, y1])
-            })
-            .chain(fallback)
+            .filter_map(|q| pdfcraft_geom::quad_bounds(&q.map(f64::from)))
+            .map(|b| self.xf.user_rect_f64(self.info, self.page, b))
+            .peekable();
+        let fallback = rects.peek().is_none().then(|| self.screen_rect(a));
+        rects.chain(fallback)
     }
 
     /// A redaction mark's areas: one per marked quad, or its rectangle.

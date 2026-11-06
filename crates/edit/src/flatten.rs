@@ -11,6 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use pdfcraft_content::Matrix;
 use pdfcraft_cos::{Dict, Document, ObjRef, Object};
 
 use crate::{EditError, check, n, page_list, place_tagged};
@@ -63,16 +64,22 @@ fn has_value(doc: &Document, widget: &Dict) -> bool {
 /// Algorithm 8.1: the matrix that maps the form's bounding box onto the annotation rectangle.
 fn placement(doc: &Document, form: &Dict, rect: [f64; 4]) -> Option<[f64; 6]> {
     let bbox = nums(doc, form.get(b"BBox")).filter(|b| b.len() == 4)?;
-    let m = nums(doc, form.get(b"Matrix")).filter(|m| m.len() == 6).unwrap_or_else(|| vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
-    let pts = [(bbox[0], bbox[1]), (bbox[2], bbox[1]), (bbox[0], bbox[3]), (bbox[2], bbox[3])]
-        .map(|(x, y)| (m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]));
-    let (x0, x1) = pts.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
-    let (y0, y1) = pts.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+    let m = nums(doc, form.get(b"Matrix")).and_then(|m| <[f64; 6]>::try_from(m).ok()).map_or(Matrix::IDENTITY, Matrix);
+    let corners = [(bbox[0], bbox[1]), (bbox[2], bbox[1]), (bbox[0], bbox[3]), (bbox[2], bbox[3])].map(|(x, y)| {
+        let (u, v) = m.apply(x, y);
+        [u, v]
+    });
+    // A non-finite corner refuses the box: a fold seeded with f64::MAX passed over it and placed the
+    // appearance by the corners that were left.
+    let [x0, y0, x1, y1] = pdfcraft_geom::bounds(corners)?;
     if x1 - x0 < 1e-9 || y1 - y0 < 1e-9 {
         return None; // empty appearance (e.g. replies): nothing to draw
     }
     let (sx, sy) = ((rect[2] - rect[0]) / (x1 - x0), (rect[3] - rect[1]) / (y1 - y0));
-    Some([sx, 0.0, 0.0, sy, rect[0] - x0 * sx, rect[1] - y0 * sy])
+    let out = [sx, 0.0, 0.0, sy, rect[0] - x0 * sx, rect[1] - y0 * sy];
+    // A box too wide for f64 scales to 0 and an infinite /Rect to inf or NaN: neither is a matrix
+    // that can be written into the page, so the appearance is not drawn and the comment stays.
+    (out.iter().all(|v| v.is_finite()) && sx != 0.0 && sy != 0.0).then_some(out)
 }
 
 /// `m` followed by a turn of `degrees` (the page's /Rotate) about the upper-left corner of

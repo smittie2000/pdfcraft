@@ -13,6 +13,7 @@ pdfcraft-annot = { workspace = true }
 pdfcraft-cos = { workspace = true }
 pdfcraft-content = { workspace = true }
 pdfcraft-fonts = { workspace = true }
+pdfcraft-geom = { workspace = true }
 pdfcraft-model = { workspace = true }
 thiserror = { workspace = true }
 # A backdrop copy's tag records a hash of the operators before the fill it turned off (backdrop.rs).

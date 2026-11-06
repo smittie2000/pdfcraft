@@ -89,6 +89,36 @@ fn an_upright_note_on_a_turned_page_is_in_view_where_it_is_drawn() {
     }
 }
 
+/// A highlight quad with corners that aren't finite has no box, so the highlight is found at its
+/// `/Rect`. The quads were folded from f32::MAX: corners at -inf and +inf (an overlong number) or
+/// NaN came out as a rectangle over the whole page, and the highlight took every press on it.
+#[test]
+fn a_highlight_quad_that_is_not_finite_does_not_cover_the_page() {
+    let (inf, nan) = (f32::INFINITY, f32::NAN);
+    let page = PageInfo { width: 200.0, height: 200.0, label: String::new(), crop: [0.0, 0.0, 200.0, 200.0], rotation: 0 };
+    let xf = PageXform { rect: Rect::from_min_size(Pos2::ZERO, vec2(200.0, 200.0)), rot: 0, pw: 200.0, ph: 200.0 };
+    let prefs = CommentPrefs::default();
+    for quad in [[-inf, -inf, inf, -inf, -inf, inf, inf, inf], [nan; 8]] {
+        let highlight = Annotation { subtype: "Highlight".into(), rect: [10.0, 10.0, 30.0, 20.0], quads: vec![quad], ..listed(0, 0, "", None) };
+        let info = DocInfo { pages: vec![page.clone()], annotations: vec![highlight], ..Default::default() };
+        let cx = PageCx {
+            page: 0,
+            xf: &xf,
+            ptr: &PagePointer::default(),
+            info: &info,
+            tool: QuickTool::Select,
+            prefs: &prefs,
+            allowed: true,
+            hidden: false,
+            redact_mark: ([0.0; 3], 1.0),
+        };
+        let a = &info.annotations[0];
+        let rects: Vec<Rect> = cx.screen_rects(a).collect();
+        assert_eq!(rects, vec![cx.screen_rect(a)], "{quad:?}: found at its /Rect");
+        assert!(cx.comment_at(pos2(150.0, 50.0)).is_none(), "{quad:?}: a press far from it misses");
+    }
+}
+
 /// A listed comment or reply at `index` on `page`, replying to `parent`.
 fn listed(page: usize, index: usize, contents: &str, parent: Option<(usize, usize)>) -> Annotation {
     Annotation {

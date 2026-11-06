@@ -577,6 +577,53 @@ fn flattening_keeps_a_cloudy_square_it_cannot_draw() {
     case("/BE << /S /C /I 2 >> /AP << /N 6 0 R >>", 1, false);
 }
 
+/// An appearance that can't be placed is not drawn, and the comment stays. The box of the form's
+/// `/BBox` under its `/Matrix` was folded from f64::MAX, which passes over NaN: one NaN corner gave
+/// a smaller box that still looked usable. A box or `/Rect` too large for f64 wrote a zero, inf or
+/// NaN scale into the page and removed the comment.
+#[test]
+fn flattening_keeps_a_comment_whose_appearance_cannot_be_placed() {
+    let page = stream("", " ");
+    let case = |bbox: &str, matrix: &str, rect: &str, nan_at: Option<usize>| {
+        let form = format!(
+            "<< /Type /XObject /Subtype /Form /BBox {bbox} {matrix} /Length 15 >>
+stream
+0 0 100 50 re f
+endstream"
+        );
+        let annot = format!("<< /Type /Annot /Subtype /Square /Rect {rect} /Contents (Synthetic comment) /AP << /N 6 0 R >> >>");
+        let mut doc = build(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << >> /Contents 5 0 R /Annots [4 0 R] >>",
+            &annot,
+            &page,
+            &form,
+        ]);
+        if let Some(i) = nan_at {
+            doc.update_dict(pdfcraft_cos::ObjRef::new(6, 0), |d| {
+                if let Some(pdfcraft_cos::Object::Array(b)) = d.get_mut(b"BBox")
+                    && let Some(v) = b.get_mut(i)
+                {
+                    *v = pdfcraft_cos::Object::Real(f64::NAN);
+                }
+            })
+            .unwrap();
+        }
+        let before = streams(&doc, 0);
+        let label = format!("/BBox {bbox} {matrix} /Rect {rect} NaN at {nan_at:?}");
+        assert_eq!(flatten(&mut doc, &[0], true, false).unwrap(), 0, "{label}: nothing is drawn");
+        let doc = reopen(&doc);
+        assert!(pdfcraft_model::pages(&doc)[0].dict.contains(b"Annots"), "{label}: the comment stays");
+        assert_eq!(streams(&doc, 0), before, "{label}: no cm is written");
+    };
+    case("[0 0 1e400 10]", "", "[100 600 200 650]", None);
+    case("[-1e308 0 1e308 10]", "", "[100 600 200 650]", None);
+    case("[0 0 100 50]", "", "[0 600 1e400 650]", None);
+    // One NaN under a skew: the corners left over still span a finite, non-empty box.
+    case("[0 0 100 50]", "/Matrix [1 0 1 1 0 0]", "[100 600 200 650]", Some(2));
+}
+
 /// #805: a supported note with no stored appearance is still drawn by viewers. Flattening must
 /// generate that appearance and bake it into the page, not delete a comment that shows an icon.
 #[test]
