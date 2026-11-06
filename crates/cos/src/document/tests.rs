@@ -1955,7 +1955,8 @@ fn an_object_read_with_a_number_that_has_no_finite_value_is_listed() {
     assert!(clean.read_leniencies().is_empty());
 }
 
-/// An object edited since it was read is left out: a save writes the edit, not the number.
+/// An object edited since it was read stays listed while its edited version still holds such a
+/// number (a save would write it as 0), and drops off once the edit removed it.
 #[test]
 fn an_edited_object_is_listed_while_it_still_holds_such_a_number() {
     let mut doc = Document::open(Arc::new(objects_file(&["<< /UserUnit 1e400 >>"]))).unwrap();
